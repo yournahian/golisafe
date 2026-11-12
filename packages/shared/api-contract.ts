@@ -27,3 +27,4 @@ export interface CreateHazardRequest {
   landmark_context?: string;
   sub_tag?: string;
 }
+

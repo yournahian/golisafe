@@ -20,3 +20,4 @@ app.use('/api/hazards', hazardsRouter);
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
+
