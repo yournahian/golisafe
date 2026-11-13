@@ -14,7 +14,7 @@ import {
   HazardCategory,
   HazardSeverity,
   CreateHazardRequest,
-} from '../../../../packages/shared/api-contract';
+} from '../../../../../packages/shared/api-contract';
 
 export interface QuickReportModalProps {
   visible: boolean;
@@ -572,3 +572,4 @@ const styles = StyleSheet.create({
 });
 
 export default QuickReportModal;
+
