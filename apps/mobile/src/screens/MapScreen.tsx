@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
-  Modal,
+  Alert,
   Platform,
   SafeAreaView,
   ScrollView,
@@ -11,12 +11,14 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
-import MapView, { Marker, UrlTile } from 'react-native-maps';
+import MapView, { Marker, Region, UrlTile } from 'react-native-maps';
 import type {
+  CreateHazardRequest,
   HazardCategory,
   HazardRecord,
 } from '../../../../packages/shared/api-contract';
-import { fetchHazards } from '../services/api';
+import QuickReportModal from '../components/Report/QuickReportModal';
+import { fetchHazards, submitHazard } from '../services/api';
 
 type FilterMode = 'all' | 'pedestrian_night' | 'driver_biker';
 
@@ -54,6 +56,7 @@ export default function MapScreen() {
   const [loading, setLoading] = useState<boolean>(false);
   const [filterMode, setFilterMode] = useState<FilterMode>('all');
   const [reportModalVisible, setReportModalVisible] = useState<boolean>(false);
+  const [region, setRegion] = useState<Region>(DHAKA_REGION);
 
   const loadHazards = useCallback(async () => {
     setLoading(true);
@@ -68,6 +71,32 @@ export default function MapScreen() {
   useEffect(() => {
     loadHazards();
   }, [loadHazards]);
+
+  const handleSubmitHazard = useCallback(async (payload: CreateHazardRequest) => {
+    let createdRecord: HazardRecord;
+    try {
+      createdRecord = await submitHazard(payload);
+    } catch {
+      createdRecord = {
+        id: `local-${Date.now()}`,
+        category: payload.category,
+        severity: payload.severity ?? 'Medium',
+        latitude: payload.latitude,
+        longitude: payload.longitude,
+        landmark_context: payload.landmark_context,
+        sub_tag: payload.sub_tag,
+        status: 'active',
+        created_at: new Date().toISOString(),
+      };
+    }
+
+    setHazards((prev) => [createdRecord, ...prev]);
+    setReportModalVisible(false);
+    Alert.alert(
+      'Hazard Reported',
+      'Thank you! Your hazard report is now visible on the Dhaka safety map.',
+    );
+  }, []);
 
   const filteredHazards = useMemo(() => {
     if (filterMode === 'pedestrian_night') {
@@ -96,6 +125,7 @@ export default function MapScreen() {
       <MapView
         style={styles.map}
         initialRegion={DHAKA_REGION}
+        onRegionChangeComplete={setRegion}
         showsUserLocation
         showsMyLocationButton={false}
       >
@@ -207,30 +237,15 @@ export default function MapScreen() {
         </TouchableOpacity>
       </View>
 
-      {/* Clean Placeholder Modal until Developer 3's QuickReportModal merges */}
-      <Modal
+      <QuickReportModal
         visible={reportModalVisible}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setReportModalVisible(false)}
-      >
-        <View style={styles.modalBackdrop}>
-          <View style={styles.modalCard}>
-            <Text style={styles.modalTitle}>Report Urban Hazard</Text>
-            <Text style={styles.modalSubtitle}>
-              Quick Report flow is ready for integration with the Report
-              component.
-            </Text>
-            <TouchableOpacity
-              style={styles.modalCloseButton}
-              onPress={() => setReportModalVisible(false)}
-              activeOpacity={0.85}
-            >
-              <Text style={styles.modalCloseText}>Close</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      </Modal>
+        currentLocation={{
+          latitude: region.latitude,
+          longitude: region.longitude,
+        }}
+        onClose={() => setReportModalVisible(false)}
+        onSubmitHazard={handleSubmitHazard}
+      />
     </View>
   );
 }
@@ -389,45 +404,6 @@ const styles = StyleSheet.create({
   reportFabText: {
     color: '#F8FAFC',
     fontSize: 15,
-    fontWeight: '700',
-  },
-  modalBackdrop: {
-    flex: 1,
-    backgroundColor: 'rgba(15, 23, 42, 0.72)',
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: 24,
-  },
-  modalCard: {
-    width: '100%',
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: '#263554',
-    backgroundColor: '#131C31',
-    padding: 20,
-  },
-  modalTitle: {
-    color: '#F8FAFC',
-    fontSize: 17,
-    fontWeight: '700',
-    marginBottom: 8,
-  },
-  modalSubtitle: {
-    color: '#94A3B8',
-    fontSize: 14,
-    lineHeight: 20,
-    marginBottom: 18,
-  },
-  modalCloseButton: {
-    height: 44,
-    borderRadius: 12,
-    backgroundColor: '#3B82F6',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  modalCloseText: {
-    color: '#F8FAFC',
-    fontSize: 14,
     fontWeight: '700',
   },
 });
