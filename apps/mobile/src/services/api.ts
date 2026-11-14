@@ -4,17 +4,22 @@ import type {
 } from '../../../../packages/shared/api-contract';
 
 export const API_BASE_URL =
-  process.env.EXPO_PUBLIC_API_URL || 'http://10.0.2.2:4000/api';
+  process.env.EXPO_PUBLIC_API_URL || 'http://192.168.0.110:4000/api';
 
 export async function fetchHazards(): Promise<HazardRecord[]> {
+  const url = `${API_BASE_URL}/hazards`;
+  console.log('[GoliSafe API] Fetching hazards from:', url);
   try {
-    const response = await fetch(`${API_BASE_URL}/hazards`);
+    const response = await fetch(url);
     if (!response.ok) {
       throw new Error(`HTTP ${response.status}`);
     }
     const data = await response.json();
-    return Array.isArray(data) ? data : [];
-  } catch {
+    const list = Array.isArray(data) ? data : [];
+    console.log(`[GoliSafe API] Loaded ${list.length} hazards from backend`);
+    return list;
+  } catch (error) {
+    console.log('[GoliSafe API] Error fetching hazards:', error);
     return [];
   }
 }
