@@ -42,3 +42,20 @@ export async function submitHazard(
   return response.json();
 }
 
+export async function confirmHazard(id: string): Promise<HazardRecord> {
+  const url = `${API_BASE_URL}/hazards/${encodeURIComponent(id)}/confirm`;
+  console.log('[GoliSafe API] Confirming hazard at:', url);
+  const response = await fetch(url, {
+    method: 'PATCH',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+  });
+
+  if (!response.ok) {
+    throw new Error(`Failed to confirm hazard: HTTP ${response.status}`);
+  }
+
+  return response.json();
+}
+
