@@ -2,7 +2,6 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ActivityIndicator,
   Alert,
-  FlatList,
   Modal,
   Platform,
   ScrollView,
@@ -21,8 +20,9 @@ import type {
   HazardCategory,
   HazardRecord,
 } from '../../../../packages/shared/api-contract';
+import AlertsModal from '../components/Alerts/AlertsModal';
 import QuickReportModal from '../components/Report/QuickReportModal';
-import { fetchHazards, submitHazard } from '../services/api';
+import { confirmHazard, fetchHazards, submitHazard } from '../services/api';
 
 type ViewMode = 'all' | 'pedestrian_night' | 'driver_biker';
 type CategoryFilter = 'all' | HazardCategory;
@@ -447,6 +447,11 @@ const LEAFLET_HTML = `<!DOCTYPE html>
       map.setView([lat, lng], 15, { animate: true });
     };
 
+    window.pickLocationMode = false;
+    window.setPickLocationMode = function(enabled) {
+      window.pickLocationMode = !!enabled;
+    };
+
     window.renderHazards = function(hazards) {
       hazardLayer.clearLayers();
       if (!Array.isArray(hazards)) return;
@@ -455,7 +460,8 @@ const LEAFLET_HTML = `<!DOCTYPE html>
         if (typeof h.latitude !== 'number' || typeof h.longitude !== 'number') return;
         const meta = CATEGORY_META[h.category] || CATEGORY_META.pothole_manhole;
         const color = meta.color;
-        const verifiedHtml = h.status === 'crowd_verified'
+        const isVerified = h.status === 'crowd_verified' || (typeof h.confirmations === 'number' && h.confirmations >= 3);
+        const verifiedHtml = isVerified
           ? '<div class="figma-marker-verified"><svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg></div>'
           : '';
 
@@ -500,6 +506,26 @@ const LEAFLET_HTML = `<!DOCTYPE html>
         }));
       }
     });
+
+    function postMapTap(latlng) {
+      if (window.ReactNativeWebView) {
+        window.ReactNativeWebView.postMessage(JSON.stringify({
+          type: 'mapTap',
+          latitude: latlng.lat,
+          longitude: latlng.lng
+        }));
+      }
+    }
+
+    map.on('contextmenu', function(e) {
+      postMapTap(e.latlng);
+    });
+
+    map.on('click', function(e) {
+      if (window.pickLocationMode) {
+        postMapTap(e.latlng);
+      }
+    });
   </script>
 </body>
 </html>`;
@@ -520,6 +546,12 @@ export default function MapScreen() {
   const [selectedHazardId, setSelectedHazardId] = useState<string | null>(null);
   const [detailModalVisible, setDetailModalVisible] = useState<boolean>(false);
   const [reportModalVisible, setReportModalVisible] = useState<boolean>(false);
+  const [pickLocationMode, setPickLocationMode] = useState<boolean>(false);
+  const [tappedCoords, setTappedCoords] = useState<{
+    latitude: number;
+    longitude: number;
+  } | null>(null);
+  const [confirmingId, setConfirmingId] = useState<string | null>(null);
   const [mapCenter, setMapCenter] = useState(DHAKA_CENTER);
   const [webViewReady, setWebViewReady] = useState<boolean>(false);
   const webViewRef = useRef<WebView>(null);
@@ -561,11 +593,44 @@ export default function MapScreen() {
 
     setHazards((prev) => [createdRecord, ...prev]);
     setSelectedHazardId(createdRecord.id);
+    setTappedCoords(null);
     setReportModalVisible(false);
     Alert.alert(
       'Hazard Reported',
       'Thank you! Your hazard report is now visible on the Dhaka safety map.',
     );
+  }, []);
+
+  const handleConfirmHazard = useCallback(async (hazard: HazardRecord) => {
+    setConfirmingId(hazard.id);
+    const currentCount =
+      hazard.confirmations ?? (hazard.status === 'crowd_verified' ? 3 : 1);
+    try {
+      const updated = await confirmHazard(hazard.id);
+      const nextCount = updated.confirmations ?? currentCount + 1;
+      const nextStatus =
+        nextCount >= 3 ? 'crowd_verified' : (updated.status ?? hazard.status);
+      setHazards((prev) =>
+        prev.map((h) =>
+          h.id === hazard.id
+            ? { ...h, ...updated, confirmations: nextCount, status: nextStatus }
+            : h,
+        ),
+      );
+    } catch {
+      const nextCount = currentCount + 1;
+      const nextStatus =
+        nextCount >= 3 ? 'crowd_verified' : hazard.status;
+      setHazards((prev) =>
+        prev.map((h) =>
+          h.id === hazard.id
+            ? { ...h, confirmations: nextCount, status: nextStatus }
+            : h,
+        ),
+      );
+    } finally {
+      setConfirmingId(null);
+    }
   }, []);
 
   const filteredHazards = useMemo(() => {
@@ -627,6 +692,13 @@ export default function MapScreen() {
     );
   }, [isNighttime, highContrastMap, webViewReady]);
 
+  useEffect(() => {
+    if (!webViewReady || !webViewRef.current) return;
+    webViewRef.current.injectJavaScript(
+      `window.setPickLocationMode && window.setPickLocationMode(${pickLocationMode}); true;`,
+    );
+  }, [pickLocationMode, webViewReady]);
+
   const handleWebViewMessage = useCallback((event: WebViewMessageEvent) => {
     try {
       const msg = JSON.parse(event.nativeEvent.data);
@@ -638,6 +710,17 @@ export default function MapScreen() {
         setMapCenter({ latitude: msg.latitude, longitude: msg.longitude });
       } else if (msg?.type === 'select' && typeof msg.id === 'string') {
         setSelectedHazardId(msg.id);
+      } else if (
+        msg?.type === 'mapTap' &&
+        typeof msg.latitude === 'number' &&
+        typeof msg.longitude === 'number'
+      ) {
+        setPickLocationMode(false);
+        setTappedCoords({
+          latitude: msg.latitude,
+          longitude: msg.longitude,
+        });
+        setReportModalVisible(true);
       }
     } catch {
       // Ignore malformed messages
@@ -1211,6 +1294,38 @@ export default function MapScreen() {
         </TouchableOpacity>
       </Modal>
 
+      {/* Tap Map to Pick Location Pill */}
+      {!selectedHazard && (
+        <TouchableOpacity
+          style={[
+            styles.pickLocationPill,
+            {
+              backgroundColor: pickLocationMode
+                ? theme.primary
+                : theme.surface,
+              borderColor: pickLocationMode ? theme.primary : theme.border,
+            },
+          ]}
+          onPress={() => setPickLocationMode((v) => !v)}
+          activeOpacity={0.85}
+        >
+          <Text
+            style={[
+              styles.pickLocationText,
+              { color: pickLocationMode ? '#FFFFFF' : theme.text },
+            ]}
+          >
+            {pickLocationMode
+              ? locale === 'bn'
+                ? '📍 মানচিত্রে ট্যাপ করুন...'
+                : '📍 Tap anywhere on map...'
+              : locale === 'bn'
+                ? '📍 লোকেশন বাছাই করুন'
+                : '📍 Tap map to pick location'}
+          </Text>
+        </TouchableOpacity>
+      )}
+
       {/* Selected Hazard Bottom Card (Figma .selected-marker-card) */}
       {selectedHazard && (() => {
         const meta = CATEGORY_META[selectedHazard.category];
@@ -1221,10 +1336,14 @@ export default function MapScreen() {
             : selectedHazard.severity === 'Medium'
               ? 'Moderate risk'
               : 'Low risk';
-        const confirmationsText =
-          selectedHazard.status === 'crowd_verified'
-            ? '3 confirmations'
-            : '1 confirmation';
+        const confirmationsCount =
+          selectedHazard.confirmations ??
+          (selectedHazard.status === 'crowd_verified' ? 3 : 1);
+        const isCrowdVerified =
+          selectedHazard.status === 'crowd_verified' ||
+          confirmationsCount >= 3;
+        const confirmationsText = `${confirmationsCount} ${confirmationsCount === 1 ? 'confirmation' : 'confirmations'}`;
+        const isConfirming = confirmingId === selectedHazard.id;
 
         return (
           <View
@@ -1257,7 +1376,7 @@ export default function MapScreen() {
               </View>
 
               <View style={styles.selectedBadgesRow}>
-                {selectedHazard.status === 'crowd_verified' && (
+                {isCrowdVerified && (
                   <View
                     style={[
                       styles.verifiedPill,
@@ -1341,13 +1460,43 @@ export default function MapScreen() {
               </Text>
             </View>
 
-            <TouchableOpacity
-              style={styles.viewDetailsBtn}
-              onPress={() => setDetailModalVisible(true)}
-              activeOpacity={0.85}
-            >
-              <Text style={styles.viewDetailsBtnText}>View details</Text>
-            </TouchableOpacity>
+            <View style={styles.selectedActionsRow}>
+              <TouchableOpacity
+                style={[
+                  styles.confirmCardBtn,
+                  {
+                    backgroundColor: theme.verifiedBg,
+                    borderColor: theme.verifiedBorder,
+                  },
+                ]}
+                onPress={() => handleConfirmHazard(selectedHazard)}
+                disabled={isConfirming}
+                activeOpacity={0.85}
+              >
+                {isConfirming ? (
+                  <ActivityIndicator size="small" color={theme.verifiedText} />
+                ) : (
+                  <Text
+                    style={[
+                      styles.confirmCardBtnText,
+                      { color: theme.verifiedText },
+                    ]}
+                  >
+                    {locale === 'bn'
+                      ? 'ভেরিফাই করুন (+১)'
+                      : '👍 Confirm Hazard (+1)'}
+                  </Text>
+                )}
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.viewDetailsBtn}
+                onPress={() => setDetailModalVisible(true)}
+                activeOpacity={0.85}
+              >
+                <Text style={styles.viewDetailsBtnText}>View details</Text>
+              </TouchableOpacity>
+            </View>
           </View>
         );
       })()}
@@ -1450,30 +1599,22 @@ export default function MapScreen() {
 
                   <TouchableOpacity
                     style={styles.confirmHazardBtn}
-                    onPress={() => {
-                      setHazards((prev) =>
-                        prev.map((h) =>
-                          h.id === selectedHazard.id
-                            ? { ...h, status: 'crowd_verified' }
-                            : h,
-                        ),
-                      );
+                    onPress={async () => {
+                      await handleConfirmHazard(selectedHazard);
                       setDetailModalVisible(false);
-                      Alert.alert(
-                        'Confirmed',
-                        'Thank you for verifying this hazard report.',
-                      );
                     }}
+                    disabled={confirmingId === selectedHazard.id}
                     activeOpacity={0.85}
                   >
-                    <Ionicons
-                      name="checkmark-circle-outline"
-                      size={18}
-                      color="#FFFFFF"
-                    />
-                    <Text style={styles.confirmHazardBtnText}>
-                      Still There · Confirm Hazard
-                    </Text>
+                    {confirmingId === selectedHazard.id ? (
+                      <ActivityIndicator size="small" color="#FFFFFF" />
+                    ) : (
+                      <Text style={styles.confirmHazardBtnText}>
+                        {locale === 'bn'
+                          ? 'ভেরিফাই করুন (+১)'
+                          : '👍 Confirm Hazard (+1)'}
+                      </Text>
+                    )}
                   </TouchableOpacity>
                 </View>
               </View>
@@ -1482,165 +1623,20 @@ export default function MapScreen() {
         })()}
       </Modal>
 
-      {/* Nearby Alerts Sheet Modal */}
-      <Modal
+      <AlertsModal
         visible={alertsSheetOpen}
-        transparent
-        animationType="slide"
-        onRequestClose={() => setAlertsSheetOpen(false)}
-      >
-        <View style={styles.alertsBackdrop}>
-          <View
-            style={[
-              styles.alertsSheet,
-              {
-                backgroundColor: theme.surface,
-                borderColor: theme.border,
-              },
-            ]}
-          >
-            <View
-              style={[styles.alertsHeader, { borderBottomColor: theme.border }]}
-            >
-              <Text style={[styles.alertsTitle, { color: theme.text }]}>
-                {copy.nearbyAlerts} ({filteredHazards.length})
-              </Text>
-              <View style={styles.alertsHeaderActions}>
-                <TouchableOpacity
-                  style={[
-                    styles.alertsRefreshBtn,
-                    {
-                      borderColor: theme.primary,
-                      backgroundColor: theme.primarySurface,
-                    },
-                  ]}
-                  onPress={loadHazards}
-                  disabled={loading}
-                >
-                  {loading ? (
-                    <ActivityIndicator size="small" color={theme.primaryText} />
-                  ) : (
-                    <Text
-                      style={[
-                        styles.alertsRefreshText,
-                        { color: theme.primaryText },
-                      ]}
-                    >
-                      {copy.refresh}
-                    </Text>
-                  )}
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={[
-                    styles.layersCloseBtn,
-                    {
-                      backgroundColor: theme.closeBtnBg,
-                      borderColor: theme.borderStrong,
-                    },
-                  ]}
-                  onPress={() => setAlertsSheetOpen(false)}
-                >
-                  <Text
-                    style={[
-                      styles.layersCloseText,
-                      { color: theme.closeBtnText },
-                    ]}
-                  >
-                    ×
-                  </Text>
-                </TouchableOpacity>
-              </View>
-            </View>
-
-            <FlatList
-              data={filteredHazards}
-              keyExtractor={(item) => item.id}
-              contentContainerStyle={styles.alertsList}
-              ListEmptyComponent={
-                <Text
-                  style={[
-                    styles.emptyAlertsText,
-                    { color: theme.textSecondary },
-                  ]}
-                >
-                  {copy.noHazards}
-                </Text>
-              }
-              renderItem={({ item }) => {
-                const meta = CATEGORY_META[item.category];
-                const accent = isNighttime ? meta.color : meta.lightColor;
-                return (
-                  <TouchableOpacity
-                    style={[
-                      styles.alertCard,
-                      {
-                        backgroundColor: theme.alertCardBg,
-                        borderColor: theme.border,
-                      },
-                    ]}
-                    onPress={() => {
-                      setAlertsSheetOpen(false);
-                      setSelectedHazardId(item.id);
-                      webViewRef.current?.injectJavaScript(
-                        `window.focusHazard && window.focusHazard(${item.latitude}, ${item.longitude}); true;`,
-                      );
-                    }}
-                    activeOpacity={0.8}
-                  >
-                    <View style={styles.alertCardTop}>
-                      <View style={styles.selectedCategoryRow}>
-                        <HazardCategoryIcon
-                          category={item.category}
-                          color={accent}
-                          size={14}
-                        />
-                        <Text
-                          style={[styles.alertCardCategory, { color: accent }]}
-                        >
-                          {locale === 'bn' ? meta.nameBn : meta.name}
-                        </Text>
-                      </View>
-                      <View
-                        style={[
-                          styles.riskPill,
-                          {
-                            backgroundColor: theme.riskBg,
-                            borderColor: theme.riskBorder,
-                          },
-                        ]}
-                      >
-                        <Text
-                          style={[
-                            styles.riskPillText,
-                            { color: theme.riskText },
-                          ]}
-                        >
-                          {item.severity}
-                        </Text>
-                      </View>
-                    </View>
-                    <Text
-                      style={[styles.alertCardTitle, { color: theme.text }]}
-                      numberOfLines={1}
-                    >
-                      {item.landmark_context || meta.name}
-                    </Text>
-                    <Text
-                      style={[
-                        styles.alertCardSub,
-                        { color: theme.textSecondary },
-                      ]}
-                    >
-                      {item.status} • {item.latitude.toFixed(4)},{' '}
-                      {item.longitude.toFixed(4)}
-                    </Text>
-                  </TouchableOpacity>
-                );
-              }}
-            />
-          </View>
-        </View>
-      </Modal>
+        onClose={() => setAlertsSheetOpen(false)}
+        hazards={filteredHazards}
+        isDarkMode={isNighttime}
+        language={locale}
+        onSelectHazard={(hazard) => {
+          setAlertsSheetOpen(false);
+          setSelectedHazardId(hazard.id);
+          webViewRef.current?.injectJavaScript(
+            `window.focusHazard && window.focusHazard(${hazard.latitude}, ${hazard.longitude}); true;`,
+          );
+        }}
+      />
 
       {/* Bottom 3-Tab Navigation Bar (Map, Alerts, + Report) */}
       <View
@@ -1763,7 +1759,11 @@ export default function MapScreen() {
       <QuickReportModal
         visible={reportModalVisible}
         currentLocation={mapCenter}
-        onClose={() => setReportModalVisible(false)}
+        initialCoords={tappedCoords}
+        onClose={() => {
+          setReportModalVisible(false);
+          setTappedCoords(null);
+        }}
         onSubmitHazard={handleSubmitHazard}
       />
     </View>
@@ -2117,8 +2117,45 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     flex: 1,
   },
-  viewDetailsBtn: {
+  pickLocationPill: {
+    position: 'absolute',
+    left: 16,
+    bottom: 84,
+    paddingHorizontal: 14,
+    paddingVertical: 9,
+    borderRadius: 999,
+    borderWidth: 1,
+    shadowColor: '#0F172A',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.16,
+    shadowRadius: 8,
+    elevation: 5,
+  },
+  pickLocationText: {
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  selectedActionsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
     marginTop: 6,
+  },
+  confirmCardBtn: {
+    flex: 1,
+    height: 40,
+    borderRadius: 10,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 8,
+  },
+  confirmCardBtnText: {
+    fontSize: 12.5,
+    fontWeight: '700',
+  },
+  viewDetailsBtn: {
+    flex: 1,
     height: 40,
     borderRadius: 10,
     backgroundColor: '#2563EB',
