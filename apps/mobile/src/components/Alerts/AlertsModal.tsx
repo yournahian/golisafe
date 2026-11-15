@@ -8,13 +8,31 @@ import {
   View,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import type {
-  HazardCategory,
-  HazardRecord,
-  HazardSeverity,
-} from '../../../../packages/shared/api-contract';
+export type HazardCategory =
+  | 'pothole_manhole'
+  | 'waterlogging'
+  | 'unlit_alley'
+  | 'unsafe_footbridge'
+  | 'extortion_spot';
 
-export type Hazard = HazardRecord;
+export type HazardSeverity = 'Low' | 'Medium' | 'Critical';
+
+export interface Hazard {
+  id: string;
+  category: HazardCategory;
+  severity: HazardSeverity;
+  latitude: number;
+  longitude: number;
+  landmark_context?: string;
+  sub_tag?: string;
+  status: 'active' | 'crowd_verified' | 'resolved';
+  created_at: string;
+  confirmations?: number;
+  confirmations_count?: number;
+  confirmation_count?: number;
+}
+
+export type HazardRecord = Hazard;
 
 export interface AlertsModalProps {
   visible: boolean;
@@ -225,13 +243,15 @@ export const AlertsModal: React.FC<AlertsModalProps> = ({
 
   const getConfirmationString = (item: Hazard): string => {
     const rawCount =
-      typeof (item as unknown as { confirmations_count?: number }).confirmations_count === 'number'
-        ? (item as unknown as { confirmations_count: number }).confirmations_count
-        : typeof (item as unknown as { confirmation_count?: number }).confirmation_count === 'number'
-          ? (item as unknown as { confirmation_count: number }).confirmation_count
-          : item.status === 'crowd_verified'
-            ? 3
-            : 1;
+      typeof item.confirmations === 'number'
+        ? item.confirmations
+        : typeof item.confirmations_count === 'number'
+          ? item.confirmations_count
+          : typeof item.confirmation_count === 'number'
+            ? item.confirmation_count
+            : item.status === 'crowd_verified'
+              ? 3
+              : 1;
 
     if (language === 'bn') {
       return rawCount === 1
