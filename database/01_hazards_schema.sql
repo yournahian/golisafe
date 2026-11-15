@@ -26,8 +26,12 @@ CREATE TABLE IF NOT EXISTS hazards (
   status TEXT NOT NULL DEFAULT 'active' CHECK (
     status IN ('active', 'crowd_verified', 'resolved')
   ),
+  confirmations INT DEFAULT 1,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+-- Migration helper for existing databases
+ALTER TABLE hazards ADD COLUMN IF NOT EXISTS confirmations INT DEFAULT 1;
 
 -- Create spatial GIST index on geography location column
 CREATE INDEX IF NOT EXISTS idx_hazards_location ON hazards USING GIST (location);

@@ -6,7 +6,8 @@ INSERT INTO hazards (
   longitude,
   landmark_context,
   sub_tag,
-  status
+  status,
+  confirmations
 )
 VALUES
   (
@@ -16,7 +17,8 @@ VALUES
     90.3752,
     'Dhanmondi 27, near Rapa Plaza',
     'Open manhole without cover',
-    'crowd_verified'
+    'crowd_verified',
+    5
   ),
   (
     'waterlogging',
@@ -25,7 +27,8 @@ VALUES
     90.3687,
     'Mirpur 10 Circle, opposite Shah Ali Plaza',
     'Knee-deep rainwater',
-    'active'
+    'active',
+    2
   ),
   (
     'unsafe_footbridge',
@@ -34,7 +37,8 @@ VALUES
     90.3899,
     'Farmgate Footbridge near Ananda Cinema',
     'Broken steps and unlit stairs',
-    'crowd_verified'
+    'crowd_verified',
+    6
   ),
   (
     'unlit_alley',
@@ -43,7 +47,8 @@ VALUES
     90.3984,
     'Underneath Mohakhali Flyover, Amtoli side',
     'Broken streetlights',
-    'active'
+    'active',
+    1
   ),
   (
     'waterlogging',
@@ -52,7 +57,8 @@ VALUES
     90.4266,
     'Middle Badda Link Road',
     'Drain overflow',
-    'active'
+    'active',
+    2
   ),
   (
     'extortion_spot',
@@ -61,7 +67,8 @@ VALUES
     90.3958,
     'Shahbagh Mor near Public Library gate',
     'Illegal street toll',
-    'active'
+    'active',
+    1
   ),
   (
     'pothole_manhole',
@@ -70,7 +77,8 @@ VALUES
     90.4172,
     'Motijheel Shapla Chattar service lane',
     'Deep pothole',
-    'active'
+    'active',
+    2
   ),
   (
     'unlit_alley',
@@ -79,7 +87,8 @@ VALUES
     90.3795,
     'Uttara Sector 7, Road 12',
     'Dim street lighting',
-    'resolved'
+    'resolved',
+    1
   ),
   (
     'extortion_spot',
@@ -88,7 +97,8 @@ VALUES
     90.3587,
     'Mohammadpur Town Hall Market approach',
     'Late-night toll collection',
-    'crowd_verified'
+    'crowd_verified',
+    4
   ),
   (
     'unsafe_footbridge',
@@ -97,7 +107,8 @@ VALUES
     90.4066,
     'Banani Kakoli Footbridge',
     'Slippery tiles when wet',
-    'active'
+    'active',
+    1
   ),
   (
     'pothole_manhole',
@@ -106,7 +117,8 @@ VALUES
     90.4350,
     'Jatrabari Flyover ramp, Demra side',
     'Collapsed asphalt',
-    'crowd_verified'
+    'crowd_verified',
+    3
   ),
   (
     'unlit_alley',
@@ -115,5 +127,6 @@ VALUES
     90.3886,
     'Bijoy Sarani side lane toward Tejgaon',
     'Dark pedestrian stretch',
-    'active'
+    'active',
+    2
   );

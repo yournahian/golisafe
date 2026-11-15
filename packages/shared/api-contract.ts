@@ -16,6 +16,7 @@ export interface HazardRecord {
   landmark_context?: string;
   sub_tag?: string;
   status: 'active' | 'crowd_verified' | 'resolved';
+  confirmations?: number;
   created_at: string;
 }
 
