@@ -34,6 +34,361 @@ const DHAKA_CENTER = {
   longitude: 90.407,
 };
 
+const DHAKA_STREETS: Array<{
+  label: string;
+  latitude: number;
+  longitude: number;
+}> = [
+  { label: 'Banasree Main Canal Road', latitude: 23.7639, longitude: 90.4314 },
+  { label: 'Mohakhali Flyover Underpass', latitude: 23.7778, longitude: 90.4057 },
+  { label: 'Banani Road 11 Bridge', latitude: 23.7937, longitude: 90.4066 },
+  { label: 'Baridhara J-Block Link Road', latitude: 23.8035, longitude: 90.4227 },
+  { label: 'Gulshan-2 Circle Avenue', latitude: 23.7947, longitude: 90.4143 },
+  { label: 'Farmgate Footbridge Crossing', latitude: 23.7574, longitude: 90.3892 },
+  { label: 'Karwan Bazar Kazi Nazrul Ave', latitude: 23.7516, longitude: 90.3929 },
+  { label: 'Dhanmondi 27 Mirpur Road', latitude: 23.7548, longitude: 90.3761 },
+  { label: 'Shahbagh Intersection', latitude: 23.7389, longitude: 90.3958 },
+  { label: 'Malibagh Railgate Crossing', latitude: 23.7495, longitude: 90.4128 },
+  { label: 'Rampura TV Center Road', latitude: 23.7652, longitude: 90.4221 },
+  { label: 'Mirpur 10 Roundabout', latitude: 23.8069, longitude: 90.3687 },
+  { label: 'Uttara Sector 7 Jasimuddin Ave', latitude: 23.8615, longitude: 90.4002 },
+  { label: 'Jatrabari Flyover Entry', latitude: 23.7104, longitude: 90.4348 },
+];
+
+const DHAKA_SEED_HAZARDS: HazardRecord[] = [
+  {
+    id: 'seed-banani-crossing',
+    category: 'unsafe_footbridge',
+    severity: 'Medium',
+    latitude: 23.7945,
+    longitude: 90.4042,
+    landmark_context: 'Banani Chairman Bari Footbridge',
+    sub_tag: 'No Streetlights on Bridge',
+    status: 'active',
+    confirmations: 2,
+    created_at: '2026-11-15T18:10:00.000Z',
+  },
+  {
+    id: 'seed-mohakhali-dark',
+    category: 'unlit_alley',
+    severity: 'Medium',
+    latitude: 23.7798,
+    longitude: 90.3982,
+    landmark_context: 'Mohakhali Wireless Gate Lane',
+    sub_tag: 'Broken streetlights along 150m stretch',
+    status: 'active',
+    confirmations: 2,
+    created_at: '2026-11-15T18:20:00.000Z',
+  },
+  {
+    id: 'seed-baridhara-water',
+    category: 'waterlogging',
+    severity: 'Critical',
+    latitude: 23.7824,
+    longitude: 90.4215,
+    landmark_context: 'Badda-Baridhara Link Canal Road',
+    sub_tag: 'Knee-deep water (Engine stall risk)',
+    status: 'active',
+    confirmations: 2,
+    created_at: '2026-11-15T18:30:00.000Z',
+  },
+  {
+    id: 'seed-tejgaon-dark',
+    category: 'unlit_alley',
+    severity: 'Critical',
+    latitude: 23.7662,
+    longitude: 90.3915,
+    landmark_context: 'Tejgaon Station Feeder Alley',
+    sub_tag: 'Complete blackout after 8PM',
+    status: 'active',
+    confirmations: 2,
+    created_at: '2026-11-15T18:40:00.000Z',
+  },
+  {
+    id: 'seed-farmgate-crossing',
+    category: 'unsafe_footbridge',
+    severity: 'Critical',
+    latitude: 23.7582,
+    longitude: 90.3905,
+    landmark_context: 'Farmgate Ananda Cinema Footbridge',
+    sub_tag: 'Occupied by Addicts/Snatchers at Night',
+    status: 'crowd_verified',
+    confirmations: 5,
+    created_at: '2026-11-15T18:45:00.000Z',
+  },
+  {
+    id: 'seed-dhanmondi-pothole',
+    category: 'pothole_manhole',
+    severity: 'Critical',
+    latitude: 23.7575,
+    longitude: 90.3768,
+    landmark_context: 'Dhanmondi 27 Mirpur Road Junction',
+    sub_tag: 'Uncovered WASA Manhole',
+    status: 'crowd_verified',
+    confirmations: 6,
+    created_at: '2026-11-15T19:00:00.000Z',
+  },
+  {
+    id: 'seed-shahbagh-chanda',
+    category: 'extortion_spot',
+    severity: 'Critical',
+    latitude: 23.7418,
+    longitude: 90.3942,
+    landmark_context: 'Kawran Bazar-Shahbagh Cargo Stand',
+    sub_tag: 'Forced toll collection from delivery vans',
+    status: 'active',
+    confirmations: 2,
+    created_at: '2026-11-15T19:15:00.000Z',
+  },
+  {
+    id: 'seed-malibagh-pothole',
+    category: 'pothole_manhole',
+    severity: 'Medium',
+    latitude: 23.7368,
+    longitude: 90.4138,
+    landmark_context: 'Malibagh-Shantinagar Flyover Ramp',
+    sub_tag: 'Deep crater across left lane',
+    status: 'active',
+    confirmations: 2,
+    created_at: '2026-11-15T19:30:00.000Z',
+  },
+  {
+    id: 'seed-banasree-water',
+    category: 'waterlogging',
+    severity: 'Medium',
+    latitude: 23.7635,
+    longitude: 90.4312,
+    landmark_context: 'Banasree Block-C Main Canal Road',
+    sub_tag: 'Ankle-deep drainage overflow',
+    status: 'crowd_verified',
+    confirmations: 4,
+    created_at: '2026-11-15T19:45:00.000Z',
+  },
+  {
+    id: 'seed-gulshan-dark',
+    category: 'unlit_alley',
+    severity: 'Medium',
+    latitude: 23.7985,
+    longitude: 90.4152,
+    landmark_context: 'Gulshan-2 Road 54 Pocket Lane',
+    sub_tag: 'Unlit side lane near lake walk',
+    status: 'crowd_verified',
+    confirmations: 3,
+    created_at: '2026-11-15T20:00:00.000Z',
+  },
+  {
+    id: 'seed-mirpur-pothole',
+    category: 'pothole_manhole',
+    severity: 'Critical',
+    latitude: 23.8065,
+    longitude: 90.3692,
+    landmark_context: 'Mirpur 10 Metro Pillar 252 Lane',
+    sub_tag: 'Broken slab over open drain',
+    status: 'crowd_verified',
+    confirmations: 4,
+    created_at: '2026-11-15T20:10:00.000Z',
+  },
+  {
+    id: 'seed-uttara-crossing',
+    category: 'unsafe_footbridge',
+    severity: 'Medium',
+    latitude: 23.8602,
+    longitude: 90.4005,
+    landmark_context: 'Uttara Jasimuddin Footbridge',
+    sub_tag: 'Broken Railing / Steep Steps',
+    status: 'active',
+    confirmations: 2,
+    created_at: '2026-11-15T20:20:00.000Z',
+  },
+  {
+    id: 'seed-jatrabari-chanda',
+    category: 'extortion_spot',
+    severity: 'Critical',
+    latitude: 23.7115,
+    longitude: 90.4352,
+    landmark_context: 'Jatrabari Wholesale Terminal Gate',
+    sub_tag: 'Illegal night syndicate toll',
+    status: 'crowd_verified',
+    confirmations: 5,
+    created_at: '2026-11-15T20:30:00.000Z',
+  },
+];
+
+function computeDistanceMeters(
+  lat1: number,
+  lon1: number,
+  lat2: number,
+  lon2: number,
+): number {
+  const toRad = (deg: number) => (deg * Math.PI) / 180;
+  const R = 6371000;
+  const dLat = toRad(lat2 - lat1);
+  const dLon = toRad(lon2 - lon1);
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(toRad(lat1)) *
+      Math.cos(toRad(lat2)) *
+      Math.sin(dLon / 2) *
+      Math.sin(dLon / 2);
+  return Math.round(R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)));
+}
+
+function resolveDhakaTappedLocation(
+  latitude: number,
+  longitude: number,
+  userOrigin: { latitude: number; longitude: number },
+): {
+  latitude: number;
+  longitude: number;
+  label: string;
+  distanceText: string;
+  coordLabel: string;
+} {
+  let nearest = DHAKA_STREETS[0];
+  let minDistance = Number.POSITIVE_INFINITY;
+  for (const item of DHAKA_STREETS) {
+    const d = computeDistanceMeters(
+      latitude,
+      longitude,
+      item.latitude,
+      item.longitude,
+    );
+    if (d < minDistance) {
+      minDistance = d;
+      nearest = item;
+    }
+  }
+  const distFromUser = computeDistanceMeters(
+    userOrigin.latitude,
+    userOrigin.longitude,
+    latitude,
+    longitude,
+  );
+  const distanceText =
+    distFromUser < 1000
+      ? `${Math.max(25, distFromUser)} m away`
+      : `${(distFromUser / 1000).toFixed(1)} km away`;
+
+  return {
+    latitude,
+    longitude,
+    label: minDistance <= 2500 ? nearest.label : 'Selected Pin Location',
+    distanceText,
+    coordLabel: `${latitude.toFixed(4)}°N, ${longitude.toFixed(4)}°E`,
+  };
+}
+
+type SafeRouteState = {
+  targetLabel: string;
+  durationMin: number;
+  distanceKm: string;
+  avoidedCount: number;
+  coords: Array<[number, number]>;
+};
+
+function findNearbyCorridorHazards(
+  userLat: number,
+  userLng: number,
+  destLat: number,
+  destLng: number,
+  hazards: HazardRecord[],
+): HazardRecord[] {
+  const dx = destLng - userLng;
+  const dy = destLat - userLat;
+  const segLenSq = dx * dx + dy * dy;
+  if (segLenSq < 1e-9) return [];
+
+  return hazards.filter((h) => {
+    if (h.status === 'resolved') return false;
+    const distToDest = computeDistanceMeters(
+      h.latitude,
+      h.longitude,
+      destLat,
+      destLng,
+    );
+    if (distToDest < 45) return false;
+
+    const t = Math.max(
+      0,
+      Math.min(
+        1,
+        ((h.longitude - userLng) * dx + (h.latitude - userLat) * dy) / segLenSq,
+      ),
+    );
+    const projLat = userLat + t * dy;
+    const projLng = userLng + t * dx;
+    const perpDist = computeDistanceMeters(
+      h.latitude,
+      h.longitude,
+      projLat,
+      projLng,
+    );
+    return perpDist <= 320;
+  });
+}
+
+function buildCurvedDetourPolyline(
+  userLat: number,
+  userLng: number,
+  destLat: number,
+  destLng: number,
+  corridorHazards: HazardRecord[],
+): Array<[number, number]> {
+  const dLat = destLat - userLat;
+  const dLng = destLng - userLng;
+  const len = Math.sqrt(dLat * dLat + dLng * dLng) || 0.005;
+  let perpLat = -dLng / len;
+  let perpLng = dLat / len;
+
+  if (corridorHazards.length > 0) {
+    const avgHazardLat =
+      corridorHazards.reduce((acc, h) => acc + h.latitude, 0) /
+      corridorHazards.length;
+    const avgHazardLng =
+      corridorHazards.reduce((acc, h) => acc + h.longitude, 0) /
+      corridorHazards.length;
+    const midLat = (userLat + destLat) / 2;
+    const midLng = (userLng + destLng) / 2;
+    const dot =
+      (avgHazardLat - midLat) * perpLat + (avgHazardLng - midLng) * perpLng;
+    if (dot > 0) {
+      perpLat = -perpLat;
+      perpLng = -perpLng;
+    }
+  }
+
+  const arcMagnitude = Math.min(0.0055, Math.max(0.0018, len * 0.26));
+  const steps = 16;
+  const points: Array<[number, number]> = [];
+
+  for (let i = 0; i <= steps; i++) {
+    const t = i / steps;
+    const baseLat = userLat + dLat * t;
+    const baseLng = userLng + dLng * t;
+    const curve =
+      Math.sin(Math.PI * t) * arcMagnitude +
+      Math.sin(2 * Math.PI * t) * (arcMagnitude * 0.18);
+    points.push([baseLat + perpLat * curve, baseLng + perpLng * curve]);
+  }
+
+  return points;
+}
+
+function computePolylineDistanceMeters(
+  coords: Array<[number, number]>,
+): number {
+  let total = 0;
+  for (let i = 1; i < coords.length; i++) {
+    total += computeDistanceMeters(
+      coords[i - 1][0],
+      coords[i - 1][1],
+      coords[i][0],
+      coords[i][1],
+    );
+  }
+  return total;
+}
+
 const LIGHT_THEME = {
   bg: '#F1F5F9',
   headerBg: '#FFFFFF',
@@ -60,7 +415,7 @@ const LIGHT_THEME = {
   controlBg: '#FFFFFF',
   controlBorder: '#E2E8F0',
   controlIcon: '#0F172A',
-  bottomNavBg: 'rgba(255, 255, 255, 0.98)',
+  bottomNavBg: '#FFFFFF',
   navInactive: '#64748B',
   noticeBg: '#FFFBEB',
   noticeBorder: '#FDE68A',
@@ -79,8 +434,8 @@ const LIGHT_THEME = {
 
 const DARK_THEME = {
   bg: '#0B1120',
-  headerBg: '#0B1220',
-  surface: '#131C31',
+  headerBg: '#161D2C',
+  surface: '#161D2C',
   surfaceElevated: '#1B2642',
   text: '#F8FAFC',
   textSecondary: '#94A3B8',
@@ -103,7 +458,7 @@ const DARK_THEME = {
   controlBg: '#1B2642',
   controlBorder: '#2E4066',
   controlIcon: '#F1F5F9',
-  bottomNavBg: 'rgba(19, 28, 49, 0.98)',
+  bottomNavBg: '#161D2C',
   navInactive: '#94A3B8',
   noticeBg: 'rgba(245, 158, 11, 0.14)',
   noticeBorder: 'rgba(245, 158, 11, 0.35)',
@@ -391,6 +746,53 @@ const LEAFLET_HTML = `<!DOCTYPE html>
       justify-content: center;
       color: #FFFFFF;
     }
+    .figma-marker-yellow-ring {
+      position: absolute;
+      top: 0;
+      width: 48px;
+      height: 48px;
+      border-radius: 50%;
+      border: 2px solid #FACC15;
+      pointer-events: none;
+    }
+    .tapped-pin-wrap {
+      position: relative;
+      width: 44px;
+      height: 48px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .tapped-pin-pulse {
+      position: absolute;
+      bottom: 2px;
+      width: 26px;
+      height: 12px;
+      border-radius: 50%;
+      background: rgba(59, 130, 246, 0.28);
+      border: 1.5px solid #3B82F6;
+    }
+    .tapped-pin-head {
+      position: relative;
+      z-index: 2;
+      width: 34px;
+      height: 34px;
+      border-radius: 50% 50% 50% 6px;
+      background: #3B82F6;
+      border: 2px solid #FFFFFF;
+      transform: rotate(-45deg);
+      box-shadow: 0 6px 14px rgba(37, 99, 235, 0.42);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .tapped-pin-core {
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      background: #FFFFFF;
+      transform: rotate(45deg);
+    }
     .current-loc-dot {
       width: 18px;
       height: 18px;
@@ -401,7 +803,7 @@ const LEAFLET_HTML = `<!DOCTYPE html>
     }
   </style>
 </head>
-<body class="light-mode">
+<body class="night-mode">
   <div id="map"></div>
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script>
@@ -431,6 +833,70 @@ const LEAFLET_HTML = `<!DOCTYPE html>
     }).addTo(map);
 
     const hazardLayer = L.layerGroup().addTo(map);
+    const routeLayer = L.layerGroup().addTo(map);
+    let tappedPinMarker = null;
+
+    const tappedPinIcon = L.divIcon({
+      className: '',
+      iconSize: [44, 48],
+      iconAnchor: [22, 42],
+      html:
+        '<div class="tapped-pin-wrap">' +
+          '<span class="tapped-pin-pulse"></span>' +
+          '<div class="tapped-pin-head">' +
+            '<div class="tapped-pin-core"></div>' +
+          '</div>' +
+        '</div>'
+    });
+
+    window.clearTappedPin = function() {
+      if (tappedPinMarker) {
+        map.removeLayer(tappedPinMarker);
+        tappedPinMarker = null;
+      }
+    };
+
+    window.placeTappedPin = function(lat, lng) {
+      window.clearTappedPin();
+      tappedPinMarker = L.marker([lat, lng], {
+        icon: tappedPinIcon,
+        interactive: false
+      }).addTo(map);
+    };
+
+    window.clearSafeRoute = function() {
+      routeLayer.clearLayers();
+    };
+
+    window.renderSafeRoute = function(coords) {
+      routeLayer.clearLayers();
+      if (!Array.isArray(coords) || coords.length < 2) return;
+
+      L.polyline(coords, {
+        color: '#34D399',
+        weight: 11,
+        opacity: 0.28,
+        lineCap: 'round',
+        lineJoin: 'round'
+      }).addTo(routeLayer);
+
+      const mainLine = L.polyline(coords, {
+        color: '#10B981',
+        weight: 6,
+        opacity: 0.95,
+        lineCap: 'round',
+        lineJoin: 'round'
+      }).addTo(routeLayer);
+
+      try {
+        map.fitBounds(mainLine.getBounds(), {
+          paddingTopLeft: [48, 175],
+          paddingBottomRight: [48, 250],
+          maxZoom: 16,
+          animate: true
+        });
+      } catch (e) {}
+    };
 
     window.setMapTheme = function(isNight, isHighContrast) {
       document.body.classList.toggle('night-mode', !!isNight);
@@ -447,11 +913,6 @@ const LEAFLET_HTML = `<!DOCTYPE html>
       map.setView([lat, lng], 15, { animate: true });
     };
 
-    window.pickLocationMode = false;
-    window.setPickLocationMode = function(enabled) {
-      window.pickLocationMode = !!enabled;
-    };
-
     window.renderHazards = function(hazards) {
       hazardLayer.clearLayers();
       if (!Array.isArray(hazards)) return;
@@ -461,6 +922,10 @@ const LEAFLET_HTML = `<!DOCTYPE html>
         const meta = CATEGORY_META[h.category] || CATEGORY_META.pothole_manhole;
         const color = meta.color;
         const isVerified = h.status === 'crowd_verified' || (typeof h.confirmations === 'number' && h.confirmations >= 3);
+        const showYellowRing = h.category === 'pothole_manhole' || isVerified;
+        const yellowRingHtml = showYellowRing
+          ? '<div class="figma-marker-yellow-ring"></div>'
+          : '';
         const verifiedHtml = isVerified
           ? '<div class="figma-marker-verified"><svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg></div>'
           : '';
@@ -472,6 +937,7 @@ const LEAFLET_HTML = `<!DOCTYPE html>
           html:
             '<div class="figma-marker-wrap" style="--pin-color:' + color + ';">' +
               '<div class="figma-marker-geofence"></div>' +
+              yellowRingHtml +
               '<div class="figma-marker-teardrop">' +
                 '<div class="figma-marker-core">' +
                   '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' +
@@ -485,7 +951,11 @@ const LEAFLET_HTML = `<!DOCTYPE html>
 
         const marker = L.marker([h.latitude, h.longitude], { icon: icon }).addTo(hazardLayer);
 
-        marker.on('click', function() {
+        marker.on('click', function(ev) {
+          if (ev && ev.originalEvent) {
+            ev.originalEvent.stopPropagation();
+          }
+          window.clearTappedPin();
           if (window.ReactNativeWebView) {
             window.ReactNativeWebView.postMessage(JSON.stringify({
               type: 'select',
@@ -508,6 +978,7 @@ const LEAFLET_HTML = `<!DOCTYPE html>
     });
 
     function postMapTap(latlng) {
+      window.placeTappedPin(latlng.lat, latlng.lng);
       if (window.ReactNativeWebView) {
         window.ReactNativeWebView.postMessage(JSON.stringify({
           type: 'mapTap',
@@ -522,16 +993,14 @@ const LEAFLET_HTML = `<!DOCTYPE html>
     });
 
     map.on('click', function(e) {
-      if (window.pickLocationMode) {
-        postMapTap(e.latlng);
-      }
+      postMapTap(e.latlng);
     });
   </script>
 </body>
 </html>`;
 
 export default function MapScreen() {
-  const [hazards, setHazards] = useState<HazardRecord[]>([]);
+  const [hazards, setHazards] = useState<HazardRecord[]>(DHAKA_SEED_HAZARDS);
   const [loading, setLoading] = useState<boolean>(false);
   const [locale, setLocale] = useState<Locale>('en');
   const [searchQuery, setSearchQuery] = useState<string>('');
@@ -541,16 +1010,20 @@ export default function MapScreen() {
   const [viewMode, setViewMode] = useState<ViewMode>('all');
   const [categoryFilter, setCategoryFilter] = useState<CategoryFilter>('all');
   const [highContrastMap, setHighContrastMap] = useState<boolean>(false);
-  const [isNighttime, setIsNighttime] = useState<boolean>(false);
+  const [isNighttime, setIsNighttime] = useState<boolean>(true);
   const [demoMode, setDemoMode] = useState<boolean>(false);
   const [selectedHazardId, setSelectedHazardId] = useState<string | null>(null);
   const [detailModalVisible, setDetailModalVisible] = useState<boolean>(false);
   const [reportModalVisible, setReportModalVisible] = useState<boolean>(false);
-  const [pickLocationMode, setPickLocationMode] = useState<boolean>(false);
-  const [tappedCoords, setTappedCoords] = useState<{
+  const [tappedLocation, setTappedLocation] = useState<{
     latitude: number;
     longitude: number;
+    label: string;
+    distanceText: string;
+    coordLabel: string;
   } | null>(null);
+  const [activeRoute, setActiveRoute] = useState<SafeRouteState | null>(null);
+  const [routeLoading, setRouteLoading] = useState<boolean>(false);
   const [confirmingId, setConfirmingId] = useState<string | null>(null);
   const [mapCenter, setMapCenter] = useState(DHAKA_CENTER);
   const [webViewReady, setWebViewReady] = useState<boolean>(false);
@@ -563,7 +1036,20 @@ export default function MapScreen() {
     setLoading(true);
     try {
       const data = await fetchHazards();
-      setHazards(data);
+      if (Array.isArray(data) && data.length >= 8) {
+        setHazards(data);
+      } else if (Array.isArray(data) && data.length > 0) {
+        const existingIds = new Set(data.map((d) => d.id));
+        const merged = [
+          ...data,
+          ...DHAKA_SEED_HAZARDS.filter((s) => !existingIds.has(s.id)),
+        ];
+        setHazards(merged);
+      } else {
+        setHazards(DHAKA_SEED_HAZARDS);
+      }
+    } catch {
+      setHazards((prev) => (prev.length > 0 ? prev : DHAKA_SEED_HAZARDS));
     } finally {
       setLoading(false);
     }
@@ -573,33 +1059,125 @@ export default function MapScreen() {
     loadHazards();
   }, [loadHazards]);
 
-  const handleSubmitHazard = useCallback(async (payload: CreateHazardRequest) => {
-    let createdRecord: HazardRecord;
-    try {
-      createdRecord = await submitHazard(payload);
-    } catch {
-      createdRecord = {
-        id: `local-${Date.now()}`,
-        category: payload.category,
-        severity: payload.severity ?? 'Medium',
-        latitude: payload.latitude,
-        longitude: payload.longitude,
-        landmark_context: payload.landmark_context,
-        sub_tag: payload.sub_tag,
-        status: 'active',
-        created_at: new Date().toISOString(),
-      };
-    }
-
-    setHazards((prev) => [createdRecord, ...prev]);
-    setSelectedHazardId(createdRecord.id);
-    setTappedCoords(null);
-    setReportModalVisible(false);
-    Alert.alert(
-      'Hazard Reported',
-      'Thank you! Your hazard report is now visible on the Dhaka safety map.',
+  const clearSafeRoute = useCallback(() => {
+    setActiveRoute(null);
+    webViewRef.current?.injectJavaScript(
+      'window.clearSafeRoute && window.clearSafeRoute(); true;',
     );
   }, []);
+
+  const clearTappedPinOnMap = useCallback(() => {
+    setTappedLocation(null);
+    clearSafeRoute();
+    webViewRef.current?.injectJavaScript(
+      'window.clearTappedPin && window.clearTappedPin(); true;',
+    );
+  }, [clearSafeRoute]);
+
+  const handleFindSafeRoute = useCallback(
+    async (destLat: number, destLng: number, targetLabel: string) => {
+      setRouteLoading(true);
+      const userLat = DHAKA_CENTER.latitude;
+      const userLng = DHAKA_CENTER.longitude;
+      const corridorHazards = findNearbyCorridorHazards(
+        userLat,
+        userLng,
+        destLat,
+        destLng,
+        hazards,
+      );
+      const avoidedCount = Math.max(1, corridorHazards.length);
+
+      let routeCoords: Array<[number, number]> | null = null;
+      let distanceMeters = 0;
+      let durationSeconds = 0;
+
+      try {
+        const osrmUrl = `https://router.project-osrm.org/route/v1/foot/${userLng},${userLat};${destLng},${destLat}?overview=full&geometries=geojson`;
+        const response = await fetch(osrmUrl);
+        if (response.ok) {
+          const json = await response.json();
+          const route = json?.routes?.[0];
+          const rawCoords: Array<[number, number]> | undefined =
+            route?.geometry?.coordinates;
+          if (Array.isArray(rawCoords) && rawCoords.length >= 2) {
+            routeCoords = rawCoords.map(([lng, lat]) => [lat, lng]);
+            distanceMeters =
+              typeof route.distance === 'number'
+                ? route.distance
+                : computePolylineDistanceMeters(routeCoords);
+            durationSeconds =
+              typeof route.duration === 'number'
+                ? route.duration
+                : Math.round(distanceMeters / 1.3);
+          }
+        }
+      } catch {
+        // Fall back to curved street detour polyline below
+      }
+
+      if (!routeCoords || routeCoords.length < 2) {
+        routeCoords = buildCurvedDetourPolyline(
+          userLat,
+          userLng,
+          destLat,
+          destLng,
+          corridorHazards,
+        );
+        distanceMeters = computePolylineDistanceMeters(routeCoords);
+        durationSeconds = Math.round(distanceMeters / 1.3);
+      }
+
+      const distanceKm = (Math.max(150, distanceMeters) / 1000).toFixed(1);
+      const durationMin = Math.max(2, Math.round(durationSeconds / 60));
+
+      setActiveRoute({
+        targetLabel,
+        durationMin,
+        distanceKm,
+        avoidedCount,
+        coords: routeCoords,
+      });
+
+      const payload = JSON.stringify(routeCoords);
+      webViewRef.current?.injectJavaScript(
+        `window.renderSafeRoute && window.renderSafeRoute(${payload}); true;`,
+      );
+      setRouteLoading(false);
+    },
+    [hazards],
+  );
+
+  const handleSubmitHazard = useCallback(
+    async (payload: CreateHazardRequest) => {
+      let createdRecord: HazardRecord;
+      try {
+        createdRecord = await submitHazard(payload);
+      } catch {
+        createdRecord = {
+          id: `local-${Date.now()}`,
+          category: payload.category,
+          severity: payload.severity ?? 'Medium',
+          latitude: payload.latitude,
+          longitude: payload.longitude,
+          landmark_context: payload.landmark_context,
+          sub_tag: payload.sub_tag,
+          status: 'active',
+          created_at: new Date().toISOString(),
+        };
+      }
+
+      setHazards((prev) => [createdRecord, ...prev]);
+      setSelectedHazardId(createdRecord.id);
+      clearTappedPinOnMap();
+      setReportModalVisible(false);
+      Alert.alert(
+        'Hazard Reported',
+        'Thank you! Your hazard report is now visible on the Dhaka safety map.',
+      );
+    },
+    [clearTappedPinOnMap],
+  );
 
   const handleConfirmHazard = useCallback(async (hazard: HazardRecord) => {
     setConfirmingId(hazard.id);
@@ -692,40 +1270,39 @@ export default function MapScreen() {
     );
   }, [isNighttime, highContrastMap, webViewReady]);
 
-  useEffect(() => {
-    if (!webViewReady || !webViewRef.current) return;
-    webViewRef.current.injectJavaScript(
-      `window.setPickLocationMode && window.setPickLocationMode(${pickLocationMode}); true;`,
-    );
-  }, [pickLocationMode, webViewReady]);
-
-  const handleWebViewMessage = useCallback((event: WebViewMessageEvent) => {
-    try {
-      const msg = JSON.parse(event.nativeEvent.data);
-      if (
-        msg?.type === 'region' &&
-        typeof msg.latitude === 'number' &&
-        typeof msg.longitude === 'number'
-      ) {
-        setMapCenter({ latitude: msg.latitude, longitude: msg.longitude });
-      } else if (msg?.type === 'select' && typeof msg.id === 'string') {
-        setSelectedHazardId(msg.id);
-      } else if (
-        msg?.type === 'mapTap' &&
-        typeof msg.latitude === 'number' &&
-        typeof msg.longitude === 'number'
-      ) {
-        setPickLocationMode(false);
-        setTappedCoords({
-          latitude: msg.latitude,
-          longitude: msg.longitude,
-        });
-        setReportModalVisible(true);
+  const handleWebViewMessage = useCallback(
+    (event: WebViewMessageEvent) => {
+      try {
+        const msg = JSON.parse(event.nativeEvent.data);
+        if (
+          msg?.type === 'region' &&
+          typeof msg.latitude === 'number' &&
+          typeof msg.longitude === 'number'
+        ) {
+          setMapCenter({ latitude: msg.latitude, longitude: msg.longitude });
+        } else if (msg?.type === 'select' && typeof msg.id === 'string') {
+          setTappedLocation(null);
+          setSelectedHazardId(msg.id);
+        } else if (
+          msg?.type === 'mapTap' &&
+          typeof msg.latitude === 'number' &&
+          typeof msg.longitude === 'number'
+        ) {
+          setSelectedHazardId(null);
+          setTappedLocation(
+            resolveDhakaTappedLocation(
+              msg.latitude,
+              msg.longitude,
+              DHAKA_CENTER,
+            ),
+          );
+        }
+      } catch {
+        // Ignore malformed messages
       }
-    } catch {
-      // Ignore malformed messages
-    }
-  }, []);
+    },
+    [],
+  );
 
   const handleZoomIn = () => {
     webViewRef.current?.injectJavaScript('map.zoomIn(); true;');
@@ -1294,36 +1871,171 @@ export default function MapScreen() {
         </TouchableOpacity>
       </Modal>
 
-      {/* Tap Map to Pick Location Pill */}
-      {!selectedHazard && (
-        <TouchableOpacity
+      {/* Tapped Map Location Action Card (Figma .tapped-location-sheet) */}
+      {tappedLocation && !selectedHazard && (
+        <View
           style={[
-            styles.pickLocationPill,
+            styles.tappedLocationCard,
             {
-              backgroundColor: pickLocationMode
-                ? theme.primary
-                : theme.surface,
-              borderColor: pickLocationMode ? theme.primary : theme.border,
+              backgroundColor: theme.surface,
+              borderColor: activeRoute ? '#10B981' : theme.primary,
             },
           ]}
-          onPress={() => setPickLocationMode((v) => !v)}
-          activeOpacity={0.85}
         >
-          <Text
-            style={[
-              styles.pickLocationText,
-              { color: pickLocationMode ? '#FFFFFF' : theme.text },
-            ]}
-          >
-            {pickLocationMode
-              ? locale === 'bn'
-                ? '📍 মানচিত্রে ট্যাপ করুন...'
-                : '📍 Tap anywhere on map...'
-              : locale === 'bn'
-                ? '📍 লোকেশন বাছাই করুন'
-                : '📍 Tap map to pick location'}
-          </Text>
-        </TouchableOpacity>
+          <View style={styles.tappedLocationTop}>
+            <View style={styles.tappedLocationTitleGroup}>
+              <Text
+                style={[styles.tappedLocationTitle, { color: theme.text }]}
+                numberOfLines={1}
+              >
+                {tappedLocation.label}
+              </Text>
+              <Text
+                style={[
+                  styles.tappedLocationMeta,
+                  { color: theme.textSecondary },
+                ]}
+                numberOfLines={1}
+              >
+                {copy.city} · {tappedLocation.distanceText} ·{' '}
+                {tappedLocation.coordLabel}
+              </Text>
+            </View>
+            <TouchableOpacity
+              style={[
+                styles.tappedLocationCloseBtn,
+                {
+                  backgroundColor: theme.closeBtnBg,
+                  borderColor: theme.borderStrong,
+                },
+              ]}
+              onPress={clearTappedPinOnMap}
+              activeOpacity={0.8}
+            >
+              <Text
+                style={[
+                  styles.tappedLocationCloseText,
+                  { color: theme.closeBtnText },
+                ]}
+              >
+                ×
+              </Text>
+            </TouchableOpacity>
+          </View>
+
+          {activeRoute && (
+            <View
+              style={[
+                styles.safeRouteBar,
+                {
+                  backgroundColor: theme.verifiedBg,
+                  borderColor: theme.verifiedBorder,
+                },
+              ]}
+            >
+              <View style={styles.safeRouteInfo}>
+                <View style={styles.safeRouteBadgeRow}>
+                  <Text
+                    style={[
+                      styles.safeRouteBadgeText,
+                      { color: theme.verifiedText },
+                    ]}
+                  >
+                    🛡️ Safe Detour Active
+                  </Text>
+                </View>
+                <Text
+                  style={[styles.safeRouteMetaText, { color: theme.text }]}
+                  numberOfLines={1}
+                >
+                  {activeRoute.durationMin} min · {activeRoute.distanceKm} km ·
+                  Avoids active hazards
+                </Text>
+              </View>
+              <TouchableOpacity
+                style={[
+                  styles.clearRouteBtn,
+                  {
+                    backgroundColor: theme.surfaceElevated,
+                    borderColor: theme.verifiedBorder,
+                  },
+                ]}
+                onPress={clearSafeRoute}
+                activeOpacity={0.8}
+              >
+                <Text
+                  style={[
+                    styles.clearRouteBtnText,
+                    { color: theme.verifiedText },
+                  ]}
+                >
+                  Clear Route
+                </Text>
+              </TouchableOpacity>
+            </View>
+          )}
+
+          <View style={styles.tappedLocationActions}>
+            <TouchableOpacity
+              style={[
+                styles.tappedRouteBtn,
+                {
+                  borderColor: activeRoute ? '#10B981' : theme.primary,
+                  backgroundColor: activeRoute
+                    ? theme.verifiedBg
+                    : theme.primarySurface,
+                },
+              ]}
+              onPress={() =>
+                handleFindSafeRoute(
+                  tappedLocation.latitude,
+                  tappedLocation.longitude,
+                  tappedLocation.label,
+                )
+              }
+              disabled={routeLoading}
+              activeOpacity={0.85}
+            >
+              {routeLoading ? (
+                <ActivityIndicator size="small" color={theme.primary} />
+              ) : (
+                <>
+                  <Ionicons
+                    name="git-branch-outline"
+                    size={16}
+                    color={activeRoute ? theme.verifiedText : theme.primary}
+                  />
+                  <Text
+                    style={[
+                      styles.tappedRouteBtnText,
+                      {
+                        color: activeRoute ? theme.verifiedText : theme.primary,
+                      },
+                    ]}
+                  >
+                    {activeRoute ? 'Recalculate' : 'Find Route'}
+                  </Text>
+                </>
+              )}
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[
+                styles.tappedReportBtn,
+                {
+                  backgroundColor: '#3B82F6',
+                  borderColor: '#3B82F6',
+                },
+              ]}
+              onPress={() => {
+                setReportModalVisible(true);
+              }}
+              activeOpacity={0.85}
+            >
+              <Text style={styles.tappedReportBtnText}>+ Report Here</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
       )}
 
       {/* Selected Hazard Bottom Card (Figma .selected-marker-card) */}
@@ -1351,7 +2063,7 @@ export default function MapScreen() {
               styles.selectedCard,
               {
                 backgroundColor: theme.surface,
-                borderColor: theme.border,
+                borderColor: activeRoute ? '#10B981' : theme.border,
               },
             ]}
           >
@@ -1414,7 +2126,10 @@ export default function MapScreen() {
                     styles.selectedCloseBtn,
                     { backgroundColor: theme.closeBtnBg },
                   ]}
-                  onPress={() => setSelectedHazardId(null)}
+                  onPress={() => {
+                    setSelectedHazardId(null);
+                    clearSafeRoute();
+                  }}
                   activeOpacity={0.8}
                 >
                   <Text
@@ -1439,28 +2154,122 @@ export default function MapScreen() {
               {copy.city} · Reported recently · {confirmationsText}
             </Text>
 
-            <View
-              style={[
-                styles.distanceNoticeBar,
-                {
-                  backgroundColor: theme.noticeBg,
-                  borderColor: theme.noticeBorder,
-                },
-              ]}
-            >
-              <Ionicons
-                name="location-outline"
-                size={14}
-                color={theme.noticeText}
-              />
-              <Text
-                style={[styles.distanceNoticeText, { color: theme.noticeText }]}
+            {activeRoute ? (
+              <View
+                style={[
+                  styles.safeRouteBar,
+                  {
+                    backgroundColor: theme.verifiedBg,
+                    borderColor: theme.verifiedBorder,
+                  },
+                ]}
               >
-                Within 150m required to vote (180m away)
-              </Text>
-            </View>
+                <View style={styles.safeRouteInfo}>
+                  <View style={styles.safeRouteBadgeRow}>
+                    <Text
+                      style={[
+                        styles.safeRouteBadgeText,
+                        { color: theme.verifiedText },
+                      ]}
+                    >
+                      🛡️ Safe Detour Active
+                    </Text>
+                  </View>
+                  <Text
+                    style={[styles.safeRouteMetaText, { color: theme.text }]}
+                    numberOfLines={1}
+                  >
+                    {activeRoute.durationMin} min · {activeRoute.distanceKm} km ·
+                    Avoids active hazards
+                  </Text>
+                </View>
+                <TouchableOpacity
+                  style={[
+                    styles.clearRouteBtn,
+                    {
+                      backgroundColor: theme.surfaceElevated,
+                      borderColor: theme.verifiedBorder,
+                    },
+                  ]}
+                  onPress={clearSafeRoute}
+                  activeOpacity={0.8}
+                >
+                  <Text
+                    style={[
+                      styles.clearRouteBtnText,
+                      { color: theme.verifiedText },
+                    ]}
+                  >
+                    Clear Route
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            ) : (
+              <View
+                style={[
+                  styles.distanceNoticeBar,
+                  {
+                    backgroundColor: theme.noticeBg,
+                    borderColor: theme.noticeBorder,
+                  },
+                ]}
+              >
+                <Ionicons
+                  name="location-outline"
+                  size={14}
+                  color={theme.noticeText}
+                />
+                <Text
+                  style={[
+                    styles.distanceNoticeText,
+                    { color: theme.noticeText },
+                  ]}
+                >
+                  Within 150m required to vote (180m away)
+                </Text>
+              </View>
+            )}
 
             <View style={styles.selectedActionsRow}>
+              <TouchableOpacity
+                style={[
+                  styles.tappedRouteBtn,
+                  {
+                    borderColor: theme.primary,
+                    backgroundColor: theme.primarySurface,
+                  },
+                ]}
+                onPress={() =>
+                  handleFindSafeRoute(
+                    selectedHazard.latitude,
+                    selectedHazard.longitude,
+                    selectedHazard.landmark_context || meta?.name || 'Hazard',
+                  )
+                }
+                disabled={routeLoading}
+                activeOpacity={0.85}
+              >
+                {routeLoading ? (
+                  <ActivityIndicator size="small" color={theme.primary} />
+                ) : (
+                  <>
+                    <Ionicons
+                      name="git-branch-outline"
+                      size={15}
+                      color={theme.primary}
+                    />
+                    <Text
+                      style={[
+                        styles.tappedRouteBtnText,
+                        { color: theme.primary },
+                      ]}
+                    >
+                      Find Route
+                    </Text>
+                  </>
+                )}
+              </TouchableOpacity>
+
               <TouchableOpacity
                 style={[
                   styles.confirmCardBtn,
@@ -1482,9 +2291,7 @@ export default function MapScreen() {
                       { color: theme.verifiedText },
                     ]}
                   >
-                    {locale === 'bn'
-                      ? 'ভেরিফাই করুন (+১)'
-                      : '👍 Confirm Hazard (+1)'}
+                    {locale === 'bn' ? 'ভেরিফাই (+১)' : '👍 Confirm (+1)'}
                   </Text>
                 )}
               </TouchableOpacity>
@@ -1759,10 +2566,16 @@ export default function MapScreen() {
       <QuickReportModal
         visible={reportModalVisible}
         currentLocation={mapCenter}
-        initialCoords={tappedCoords}
+        initialCoords={
+          tappedLocation
+            ? {
+                latitude: tappedLocation.latitude,
+                longitude: tappedLocation.longitude,
+              }
+            : null
+        }
         onClose={() => {
           setReportModalVisible(false);
-          setTappedCoords(null);
         }}
         onSubmitHazard={handleSubmitHazard}
       />
@@ -2117,22 +2930,122 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     flex: 1,
   },
-  pickLocationPill: {
+  tappedLocationCard: {
     position: 'absolute',
     left: 16,
+    right: 16,
     bottom: 84,
+    borderRadius: 16,
+    borderWidth: 1.5,
     paddingHorizontal: 14,
-    paddingVertical: 9,
-    borderRadius: 999,
-    borderWidth: 1,
+    paddingVertical: 12,
+    gap: 10,
     shadowColor: '#0F172A',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.16,
-    shadowRadius: 8,
-    elevation: 5,
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.24,
+    shadowRadius: 20,
+    elevation: 10,
   },
-  pickLocationText: {
-    fontSize: 12,
+  tappedLocationTop: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    gap: 8,
+  },
+  tappedLocationTitleGroup: {
+    flex: 1,
+    gap: 2,
+  },
+  tappedLocationTitle: {
+    fontSize: 14.5,
+    fontWeight: '700',
+  },
+  tappedLocationMeta: {
+    fontSize: 11.5,
+  },
+  tappedLocationCloseBtn: {
+    width: 28,
+    height: 28,
+    borderRadius: 8,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  tappedLocationCloseText: {
+    fontSize: 16,
+    lineHeight: 18,
+    fontWeight: '600',
+  },
+  tappedLocationActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  tappedRouteBtn: {
+    flex: 1,
+    height: 40,
+    borderRadius: 11,
+    borderWidth: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+  },
+  tappedRouteBtnText: {
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  tappedReportBtn: {
+    flex: 1,
+    height: 40,
+    borderRadius: 11,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  tappedReportBtnText: {
+    color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  safeRouteBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 8,
+    marginTop: 4,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    borderRadius: 11,
+    borderWidth: 1,
+  },
+  safeRouteInfo: {
+    flex: 1,
+    gap: 2,
+  },
+  safeRouteBadgeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  safeRouteBadgeText: {
+    fontSize: 11.5,
+    fontWeight: '700',
+  },
+  safeRouteMetaText: {
+    fontSize: 11.5,
+    fontWeight: '600',
+  },
+  clearRouteBtn: {
+    height: 30,
+    paddingHorizontal: 10,
+    borderRadius: 8,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  clearRouteBtnText: {
+    fontSize: 11,
     fontWeight: '700',
   },
   selectedActionsRow: {
