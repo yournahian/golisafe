@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   Modal,
   View,
@@ -19,6 +19,7 @@ import {
 export interface QuickReportModalProps {
   visible: boolean;
   currentLocation: { latitude: number; longitude: number };
+  initialCoords?: { latitude: number; longitude: number } | null;
   onClose: () => void;
   onSubmitHazard: (payload: CreateHazardRequest) => Promise<void>;
 }
@@ -86,6 +87,7 @@ const SEVERITIES: HazardSeverity[] = ['Low', 'Medium', 'Critical'];
 export const QuickReportModal: React.FC<QuickReportModalProps> = ({
   visible,
   currentLocation,
+  initialCoords,
   onClose,
   onSubmitHazard,
 }) => {
@@ -94,6 +96,23 @@ export const QuickReportModal: React.FC<QuickReportModalProps> = ({
   const [selectedSubtag, setSelectedSubtag] = useState<string | undefined>(undefined);
   const [landmarkContext, setLandmarkContext] = useState<string>('');
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
+
+  // Automatically pre-fill latitude and longitude state
+  const effectiveInitial = initialCoords ?? currentLocation;
+  const [latitude, setLatitude] = useState<number>(effectiveInitial.latitude);
+  const [longitude, setLongitude] = useState<number>(effectiveInitial.longitude);
+
+  useEffect(() => {
+    if (initialCoords) {
+      setLatitude(initialCoords.latitude);
+      setLongitude(initialCoords.longitude);
+    } else if (currentLocation) {
+      setLatitude(currentLocation.latitude);
+      setLongitude(currentLocation.longitude);
+    }
+  }, [initialCoords, currentLocation, visible]);
+
+  const isPinDropped = Boolean(initialCoords);
 
   const handleCategorySelect = (category: HazardCategory) => {
     setSelectedCategory(category);
@@ -124,8 +143,8 @@ export const QuickReportModal: React.FC<QuickReportModalProps> = ({
       await onSubmitHazard({
         category: selectedCategory,
         severity: selectedSeverity,
-        latitude: currentLocation.latitude,
-        longitude: currentLocation.longitude,
+        latitude,
+        longitude,
         landmark_context: landmarkContext.trim() || undefined,
         sub_tag: selectedCategory === 'unsafe_footbridge' ? selectedSubtag : undefined,
       });
@@ -166,9 +185,17 @@ export const QuickReportModal: React.FC<QuickReportModalProps> = ({
           {/* Header */}
           <View style={styles.header}>
             <View style={styles.titleGroup}>
-              <Text style={styles.title}>Quick Report</Text>
+              <View style={styles.titleRow}>
+                <Text style={styles.title}>Quick Report</Text>
+                {isPinDropped && (
+                  <View style={styles.pinBadge}>
+                    <Text style={styles.pinBadgeText}>📍 Pin dropped from map</Text>
+                  </View>
+                )}
+              </View>
               <Text style={styles.subtitle}>
-                {currentLocation.latitude.toFixed(4)}°N, {currentLocation.longitude.toFixed(4)}°E &middot; Tap to report
+                {latitude.toFixed(4)}°N, {longitude.toFixed(4)}°E &middot;{' '}
+                {isPinDropped ? 'Pinned map coordinates' : 'Tap to report'}
               </Text>
             </View>
             <TouchableOpacity
@@ -185,6 +212,16 @@ export const QuickReportModal: React.FC<QuickReportModalProps> = ({
             showsVerticalScrollIndicator={false}
             contentContainerStyle={styles.scrollContent}
           >
+            {/* Subtle banner if pin was dropped from map */}
+            {isPinDropped && (
+              <View style={styles.pinBanner}>
+                <Text style={styles.pinBannerText}>📍 Pin dropped from map</Text>
+                <Text style={styles.pinBannerCoords}>
+                  ({latitude.toFixed(5)}, {longitude.toFixed(5)})
+                </Text>
+              </View>
+            )}
+
             {/* Section: Category Selection */}
             <View style={styles.section}>
               <Text style={styles.sectionLabel}>Select Hazard Category</Text>
@@ -402,11 +439,51 @@ const styles = StyleSheet.create({
   titleGroup: {
     flex: 1,
   },
+  titleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
   title: {
     fontSize: 17,
     lineHeight: 22,
     fontWeight: '700',
     color: '#F8FAFC',
+  },
+  pinBadge: {
+    backgroundColor: 'rgba(59, 130, 246, 0.16)',
+    borderWidth: 1,
+    borderColor: 'rgba(59, 130, 246, 0.35)',
+    borderRadius: 6,
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+  },
+  pinBadgeText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#93C5FD',
+  },
+  pinBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: 'rgba(59, 130, 246, 0.12)',
+    borderWidth: 1,
+    borderColor: 'rgba(59, 130, 246, 0.28)',
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  pinBannerText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#93C5FD',
+  },
+  pinBannerCoords: {
+    fontSize: 11,
+    fontWeight: '500',
+    color: '#94A3B8',
   },
   subtitle: {
     fontSize: 12,
@@ -579,4 +656,3 @@ const styles = StyleSheet.create({
 });
 
 export default QuickReportModal;
-
