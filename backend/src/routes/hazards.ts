@@ -89,9 +89,11 @@ function getSupabaseClient(): SupabaseClient | null {
   }
 }
 
-/**
- * Check if a Supabase error is caused by missing optional columns (e.g. confirmations or resolved_count).
- */
+const BASE_COLUMNS =
+  'id, category, severity, latitude, longitude, landmark_context, sub_tag, status, created_at';
+const CONFIRM_COLUMNS = `${BASE_COLUMNS}, confirmations`;
+const FULL_COLUMNS = `${CONFIRM_COLUMNS}, resolved_count`;
+
 function isMissingColumnError(error: any): boolean {
   if (!error) return false;
   const message = String(error.message || '').toLowerCase();
@@ -99,14 +101,11 @@ function isMissingColumnError(error: any): boolean {
   return (
     message.includes('confirmations') ||
     message.includes('resolved_count') ||
-    code === '42703' || // Postgres: undefined_column
-    code === 'PGRST204' // PostgREST: column not found in schema cache
+    code === '42703' ||
+    code === 'PGRST204'
   );
 }
 
-/**
- * Normalizes query string severity ('low' | 'medium' | 'high' | 'critical') to HazardSeverity.
- */
 function normalizeSeverity(severity?: string): HazardSeverity | null {
   if (!severity) return null;
   const s = severity.trim().toLowerCase();
@@ -114,6 +113,115 @@ function normalizeSeverity(severity?: string): HazardSeverity | null {
   if (s === 'medium') return 'Medium';
   if (s === 'high' || s === 'critical') return 'Critical';
   return null;
+}
+
+function filterMockHazards(
+  isVerifiedOnly: boolean,
+  normalizedSeverity: HazardSeverity | null
+): HazardRecord[] {
+  let activeMocks = mockHazards.filter((h) =>
+    isVerifiedOnly
+      ? h.status === 'crowd_verified'
+      : h.status === 'active' || h.status === 'crowd_verified'
+  );
+
+  if (normalizedSeverity) {
+    activeMocks = activeMocks.filter(
+      (h) => h.severity.toLowerCase() === normalizedSeverity.toLowerCase()
+    );
+  }
+
+  return activeMocks;
+}
+
+async function fetchHazardById(supabase: SupabaseClient, hazardId: string) {
+  let hasConfirmationsColumn = true;
+  let hasResolvedCountColumn = true;
+
+  let result: any = await supabase
+    .from('hazards')
+    .select(FULL_COLUMNS)
+    .eq('id', hazardId)
+    .maybeSingle();
+
+  if (result.error && isMissingColumnError(result.error)) {
+    hasResolvedCountColumn = false;
+    result = await supabase
+      .from('hazards')
+      .select(CONFIRM_COLUMNS)
+      .eq('id', hazardId)
+      .maybeSingle();
+
+    if (result.error && isMissingColumnError(result.error)) {
+      hasConfirmationsColumn = false;
+      result = await supabase
+        .from('hazards')
+        .select(BASE_COLUMNS)
+        .eq('id', hazardId)
+        .maybeSingle();
+    }
+  }
+
+  return {
+    data: result.data as any,
+    error: result.error as any,
+    hasConfirmationsColumn,
+    hasResolvedCountColumn,
+  };
+}
+
+async function applyHazardUpdate(
+  supabase: SupabaseClient,
+  hazardId: string,
+  primaryPayload: Record<string, any>,
+  statusOnlyPayload: Record<string, any>,
+  usePrimaryColumns: boolean,
+  existingRecord: any,
+  mergedDefaults: Pick<HazardRecord, 'confirmations' | 'resolved_count' | 'status'>
+): Promise<{ data?: HazardRecord; error?: any }> {
+  if (usePrimaryColumns) {
+    const updateResult: any = await supabase
+      .from('hazards')
+      .update(primaryPayload)
+      .eq('id', hazardId)
+      .select(FULL_COLUMNS)
+      .single();
+
+    if (!updateResult.error) {
+      return { data: updateResult.data as HazardRecord };
+    }
+    if (!isMissingColumnError(updateResult.error)) {
+      return { error: updateResult.error };
+    }
+  }
+
+  if (Object.keys(statusOnlyPayload).length > 0) {
+    const fallbackUpdate: any = await supabase
+      .from('hazards')
+      .update(statusOnlyPayload)
+      .eq('id', hazardId)
+      .select(BASE_COLUMNS)
+      .single();
+
+    if (fallbackUpdate.error) {
+      return { error: fallbackUpdate.error };
+    }
+
+    return {
+      data: {
+        ...(fallbackUpdate.data as HazardRecord),
+        confirmations: mergedDefaults.confirmations,
+        resolved_count: mergedDefaults.resolved_count,
+      },
+    };
+  }
+
+  return {
+    data: {
+      ...(existingRecord as HazardRecord),
+      ...mergedDefaults,
+    },
+  };
 }
 
 // In-memory fallback mock hazards matching database/02_seed_dhaka_hazards.sql
@@ -339,11 +447,6 @@ function resolveMockHazard(
   return res.status(404).json({ error: 'Hazard not found' });
 }
 
-/**
- * Shared confirmation handler for:
- * PATCH /api/hazards/:id/confirm
- * POST  /api/hazards/:id/confirm
- */
 const handleConfirmHazard = async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
@@ -357,57 +460,20 @@ const handleConfirmHazard = async (req: Request, res: Response) => {
 
     if (supabase) {
       try {
-        let existingRecord: any = null;
-        let hasConfirmationsColumn = true;
+        const fetched = await fetchHazardById(supabase, hazardId);
 
-        // Try selecting with confirmations column (explicitly typed as any to prevent TS2322 on reassignment)
-        let fetchWithConfirmations: any = await supabase
-          .from('hazards')
-          .select(
-            'id, category, severity, latitude, longitude, landmark_context, sub_tag, status, created_at, confirmations, resolved_count'
-          )
-          .eq('id', hazardId)
-          .maybeSingle();
-
-        if (fetchWithConfirmations.error) {
-          if (isMissingColumnError(fetchWithConfirmations.error)) {
-            hasConfirmationsColumn = false;
-            // Retry select without confirmations/resolved_count columns
-            const fetchWithoutConfirmations: any = await supabase
-              .from('hazards')
-              .select(
-                'id, category, severity, latitude, longitude, landmark_context, sub_tag, status, created_at'
-              )
-              .eq('id', hazardId)
-              .maybeSingle();
-
-            if (fetchWithoutConfirmations.error) {
-              if (fetchWithoutConfirmations.error.code === '22P02') {
-                return confirmMockHazard(hazardId, res);
-              }
-              return res
-                .status(500)
-                .json({ error: fetchWithoutConfirmations.error.message });
-            }
-            existingRecord = fetchWithoutConfirmations.data;
-          } else if (fetchWithConfirmations.error.code === '22P02') {
-            // Invalid UUID format for Postgres, check mock store
+        if (fetched.error) {
+          if (fetched.error.code === '22P02') {
             return confirmMockHazard(hazardId, res);
-          } else {
-            // If Supabase encountered connection/network error, fallback to mock store if matched
-            const mockMatch = mockHazards.find((h) => h.id === hazardId);
-            if (mockMatch) {
-              return confirmMockHazard(hazardId, res);
-            }
-            return res
-              .status(500)
-              .json({ error: fetchWithConfirmations.error.message });
           }
-        } else {
-          existingRecord = fetchWithConfirmations.data;
+          const mockMatch = mockHazards.find((h) => h.id === hazardId);
+          if (mockMatch) {
+            return confirmMockHazard(hazardId, res);
+          }
+          return res.status(500).json({ error: fetched.error.message });
         }
 
-        // If not found in Supabase, check mock store before returning 404
+        const existingRecord = fetched.data;
         if (!existingRecord) {
           const mockMatch = mockHazards.find((h) => h.id === hazardId);
           if (mockMatch) {
@@ -416,111 +482,38 @@ const handleConfirmHazard = async (req: Request, res: Response) => {
           return res.status(404).json({ error: 'Hazard not found' });
         }
 
-        // Increment confirmations count by 1 (defaulting to (existing.confirmations || 1) + 1)
         const newConfirmations = (existingRecord.confirmations || 1) + 1;
         const shouldVerify = newConfirmations >= 3;
+        const statusOnlyPayload: Record<string, any> = shouldVerify
+          ? { status: 'crowd_verified' }
+          : {};
+        const primaryPayload: Record<string, any> = {
+          confirmations: newConfirmations,
+          ...statusOnlyPayload,
+        };
 
-        if (hasConfirmationsColumn) {
-          const updatePayload: Record<string, any> = {
-            confirmations: newConfirmations,
-          };
-          if (shouldVerify) {
-            updatePayload.status = 'crowd_verified';
-          }
-
-          const updateResult: any = await supabase
-            .from('hazards')
-            .update(updatePayload)
-            .eq('id', hazardId)
-            .select(
-              'id, category, severity, latitude, longitude, landmark_context, sub_tag, status, created_at, confirmations, resolved_count'
-            )
-            .single();
-
-          if (updateResult.error) {
-            if (isMissingColumnError(updateResult.error)) {
-              // Gracefully handle column missing during update
-              const fallbackPayload: Record<string, any> = {};
-              if (shouldVerify) {
-                fallbackPayload.status = 'crowd_verified';
-              }
-
-              if (Object.keys(fallbackPayload).length > 0) {
-                const fallbackUpdate: any = await supabase
-                  .from('hazards')
-                  .update(fallbackPayload)
-                  .eq('id', hazardId)
-                  .select(
-                    'id, category, severity, latitude, longitude, landmark_context, sub_tag, status, created_at'
-                  )
-                  .single();
-
-                if (fallbackUpdate.error) {
-                  return res
-                    .status(500)
-                    .json({ error: fallbackUpdate.error.message });
-                }
-
-                const resultHazard: HazardRecord = {
-                  ...(fallbackUpdate.data as HazardRecord),
-                  confirmations: newConfirmations,
-                  resolved_count: existingRecord.resolved_count ?? 0,
-                };
-                return res.status(200).json(resultHazard);
-              }
-
-              const resultHazard: HazardRecord = {
-                ...(existingRecord as HazardRecord),
-                confirmations: newConfirmations,
-                resolved_count: existingRecord.resolved_count ?? 0,
-              };
-              return res.status(200).json(resultHazard);
-            }
-
-            return res.status(500).json({ error: updateResult.error.message });
-          }
-
-          return res.status(200).json(updateResult.data as HazardRecord);
-        } else {
-          // Schema does not have confirmations column: update status if >= 3
-          const fallbackPayload: Record<string, any> = {};
-          if (shouldVerify) {
-            fallbackPayload.status = 'crowd_verified';
-          }
-
-          if (Object.keys(fallbackPayload).length > 0) {
-            const fallbackUpdate: any = await supabase
-              .from('hazards')
-              .update(fallbackPayload)
-              .eq('id', hazardId)
-              .select(
-                'id, category, severity, latitude, longitude, landmark_context, sub_tag, status, created_at'
-              )
-              .single();
-
-            if (fallbackUpdate.error) {
-              return res
-                .status(500)
-                .json({ error: fallbackUpdate.error.message });
-            }
-
-            const resultHazard: HazardRecord = {
-              ...(fallbackUpdate.data as HazardRecord),
-              confirmations: newConfirmations,
-              resolved_count: existingRecord.resolved_count ?? 0,
-            };
-            return res.status(200).json(resultHazard);
-          }
-
-          const resultHazard: HazardRecord = {
-            ...(existingRecord as HazardRecord),
+        const updated = await applyHazardUpdate(
+          supabase,
+          hazardId,
+          primaryPayload,
+          statusOnlyPayload,
+          fetched.hasConfirmationsColumn,
+          existingRecord,
+          {
             confirmations: newConfirmations,
             resolved_count: existingRecord.resolved_count ?? 0,
-          };
-          return res.status(200).json(resultHazard);
+            status: shouldVerify
+              ? 'crowd_verified'
+              : (existingRecord.status as HazardRecord['status']),
+          }
+        );
+
+        if (updated.error) {
+          return res.status(500).json({ error: updated.error.message });
         }
+
+        return res.status(200).json(updated.data);
       } catch (err: unknown) {
-        // Unexpected database error fallback
         const mockMatch = mockHazards.find((h) => h.id === hazardId);
         if (mockMatch) {
           return confirmMockHazard(hazardId, res);
@@ -531,7 +524,6 @@ const handleConfirmHazard = async (req: Request, res: Response) => {
       }
     }
 
-    // Supabase not configured: fallback to in-memory mock store
     return confirmMockHazard(hazardId, res);
   } catch (err: unknown) {
     const message =
@@ -540,12 +532,6 @@ const handleConfirmHazard = async (req: Request, res: Response) => {
   }
 };
 
-/**
- * Shared resolve handler for:
- * PATCH /api/hazards/:id/resolve
- * POST  /api/hazards/:id/resolve
- * Increments resolved_count by 1; if resolved_count >= 2, sets status to 'resolved'.
- */
 const handleResolveHazard = async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
@@ -559,53 +545,20 @@ const handleResolveHazard = async (req: Request, res: Response) => {
 
     if (supabase) {
       try {
-        let existingRecord: any = null;
-        let hasResolvedCountColumn = true;
+        const fetched = await fetchHazardById(supabase, hazardId);
 
-        // Try selecting with resolved_count column (explicitly typed as any to prevent TS2322 on reassignment)
-        let fetchResult: any = await supabase
-          .from('hazards')
-          .select(
-            'id, category, severity, latitude, longitude, landmark_context, sub_tag, status, created_at, confirmations, resolved_count'
-          )
-          .eq('id', hazardId)
-          .maybeSingle();
-
-        if (fetchResult.error && isMissingColumnError(fetchResult.error)) {
-          hasResolvedCountColumn = false;
-          // Fallback select without resolved_count
-          fetchResult = await supabase
-            .from('hazards')
-            .select(
-              'id, category, severity, latitude, longitude, landmark_context, sub_tag, status, created_at, confirmations'
-            )
-            .eq('id', hazardId)
-            .maybeSingle();
-
-          if (fetchResult.error && isMissingColumnError(fetchResult.error)) {
-            fetchResult = await supabase
-              .from('hazards')
-              .select(
-                'id, category, severity, latitude, longitude, landmark_context, sub_tag, status, created_at'
-              )
-              .eq('id', hazardId)
-              .maybeSingle();
-          }
-        }
-
-        if (fetchResult.error) {
-          if (fetchResult.error.code === '22P02') {
+        if (fetched.error) {
+          if (fetched.error.code === '22P02') {
             return resolveMockHazard(hazardId, res);
           }
           const mockMatch = mockHazards.find((h) => h.id === hazardId);
           if (mockMatch) {
             return resolveMockHazard(hazardId, res);
           }
-          return res.status(500).json({ error: fetchResult.error.message });
+          return res.status(500).json({ error: fetched.error.message });
         }
 
-        existingRecord = fetchResult.data;
-
+        const existingRecord = fetched.data;
         if (!existingRecord) {
           const mockMatch = mockHazards.find((h) => h.id === hazardId);
           if (mockMatch) {
@@ -614,118 +567,44 @@ const handleResolveHazard = async (req: Request, res: Response) => {
           return res.status(404).json({ error: 'Hazard not found' });
         }
 
-        // Increment resolved_count by 1
         const nextResolved = (existingRecord.resolved_count || 0) + 1;
         const shouldResolve = nextResolved >= 2;
-        const nextStatus = shouldResolve
+        const nextStatus: 'active' | 'crowd_verified' | 'resolved' = shouldResolve
           ? 'resolved'
           : existingRecord.status || 'active';
+        const statusOnlyPayload: Record<string, any> = shouldResolve
+          ? { status: 'resolved' }
+          : {};
+        const primaryPayload: Record<string, any> = {
+          resolved_count: nextResolved,
+          ...statusOnlyPayload,
+        };
 
-        if (hasResolvedCountColumn) {
-          const updatePayload: Record<string, any> = {
-            resolved_count: nextResolved,
-          };
-          if (shouldResolve) {
-            updatePayload.status = 'resolved';
-          }
-
-          let updateResult: any = await supabase
-            .from('hazards')
-            .update(updatePayload)
-            .eq('id', hazardId)
-            .select(
-              'id, category, severity, latitude, longitude, landmark_context, sub_tag, status, created_at, confirmations, resolved_count'
-            )
-            .single();
-
-          if (updateResult.error && isMissingColumnError(updateResult.error)) {
-            // Missing resolved_count in schema cache on update
-            const fallbackPayload: Record<string, any> = {};
-            if (shouldResolve) {
-              fallbackPayload.status = 'resolved';
-            }
-
-            if (Object.keys(fallbackPayload).length > 0) {
-              const fallbackUpdate: any = await supabase
-                .from('hazards')
-                .update(fallbackPayload)
-                .eq('id', hazardId)
-                .select(
-                  'id, category, severity, latitude, longitude, landmark_context, sub_tag, status, created_at'
-                )
-                .single();
-
-              if (fallbackUpdate.error) {
-                return resolveMockHazard(
-                  hazardId,
-                  res,
-                  existingRecord,
-                  nextResolved,
-                  nextStatus
-                );
-              }
-
-              const resultHazard: HazardRecord = {
-                ...(fallbackUpdate.data as HazardRecord),
-                confirmations: existingRecord.confirmations ?? 1,
-                resolved_count: nextResolved,
-              };
-              return res.status(200).json(resultHazard);
-            }
-
-            const resultHazard: HazardRecord = {
-              ...(existingRecord as HazardRecord),
-              resolved_count: nextResolved,
-              status: nextStatus,
-            };
-            return res.status(200).json(resultHazard);
-          }
-
-          if (updateResult.error) {
-            return resolveMockHazard(
-              hazardId,
-              res,
-              existingRecord,
-              nextResolved,
-              nextStatus
-            );
-          }
-
-          return res.status(200).json(updateResult.data as HazardRecord);
-        } else {
-          // Schema does not have resolved_count column
-          const fallbackPayload: Record<string, any> = {};
-          if (shouldResolve) {
-            fallbackPayload.status = 'resolved';
-          }
-
-          if (Object.keys(fallbackPayload).length > 0) {
-            const fallbackUpdate: any = await supabase
-              .from('hazards')
-              .update(fallbackPayload)
-              .eq('id', hazardId)
-              .select(
-                'id, category, severity, latitude, longitude, landmark_context, sub_tag, status, created_at'
-              )
-              .single();
-
-            if (!fallbackUpdate.error && fallbackUpdate.data) {
-              const resultHazard: HazardRecord = {
-                ...(fallbackUpdate.data as HazardRecord),
-                confirmations: existingRecord.confirmations ?? 1,
-                resolved_count: nextResolved,
-              };
-              return res.status(200).json(resultHazard);
-            }
-          }
-
-          const resultHazard: HazardRecord = {
-            ...(existingRecord as HazardRecord),
+        const updated = await applyHazardUpdate(
+          supabase,
+          hazardId,
+          primaryPayload,
+          statusOnlyPayload,
+          fetched.hasResolvedCountColumn,
+          existingRecord,
+          {
+            confirmations: existingRecord.confirmations ?? 1,
             resolved_count: nextResolved,
             status: nextStatus,
-          };
-          return res.status(200).json(resultHazard);
+          }
+        );
+
+        if (updated.error) {
+          return resolveMockHazard(
+            hazardId,
+            res,
+            existingRecord,
+            nextResolved,
+            nextStatus
+          );
         }
+
+        return res.status(200).json(updated.data);
       } catch (err: unknown) {
         const mockMatch = mockHazards.find((h) => h.id === hazardId);
         if (mockMatch) {
@@ -737,7 +616,6 @@ const handleResolveHazard = async (req: Request, res: Response) => {
       }
     }
 
-    // Supabase not configured: fallback to in-memory mock store
     return resolveMockHazard(hazardId, res);
   } catch (err: unknown) {
     const message =
@@ -762,13 +640,6 @@ router.post('/:id/confirm', handleConfirmHazard);
 router.patch('/:id/resolve', handleResolveHazard);
 router.post('/:id/resolve', handleResolveHazard);
 
-/**
- * GET /api/hazards
- * Query active hazards ('active' or 'crowd_verified') ordered by created_at DESC.
- * Supports optional query params:
- *   - severity: 'low' | 'medium' | 'high'
- *   - verified: 'true' (filters for status === 'crowd_verified')
- */
 router.get('/', async (req: Request, res: Response) => {
   const { severity, verified } = req.query;
   const normalizedSeverity = normalizeSeverity(
@@ -780,120 +651,41 @@ router.get('/', async (req: Request, res: Response) => {
   try {
     const supabase = getSupabaseClient();
     if (supabase) {
-      let query: any = supabase
-        .from('hazards')
-        .select(
-          'id, category, severity, latitude, longitude, landmark_context, sub_tag, status, created_at, confirmations, resolved_count'
-        );
-
-      if (isVerifiedOnly) {
-        query = query.eq('status', 'crowd_verified');
-      } else {
-        query = query.in('status', ['active', 'crowd_verified']);
-      }
-
-      if (normalizedSeverity) {
-        query = query.eq('severity', normalizedSeverity);
-      }
-
-      query = query.order('created_at', { ascending: false });
-
-      let queryResult: any = await query;
-      let data = queryResult.data;
-      let error = queryResult.error;
-
-      if (error && isMissingColumnError(error)) {
-        // Fallback retry without missing schema columns (explicitly typed as any to prevent TS2322 on reassignment)
-        let fallbackQuery: any = supabase
-          .from('hazards')
-          .select(
-            'id, category, severity, latitude, longitude, landmark_context, sub_tag, status, created_at, confirmations'
-          );
-
-        if (isVerifiedOnly) {
-          fallbackQuery = fallbackQuery.eq('status', 'crowd_verified');
-        } else {
-          fallbackQuery = fallbackQuery.in('status', ['active', 'crowd_verified']);
-        }
+      for (const columns of [FULL_COLUMNS, CONFIRM_COLUMNS, BASE_COLUMNS]) {
+        let query: any = supabase.from('hazards').select(columns);
+        query = isVerifiedOnly
+          ? query.eq('status', 'crowd_verified')
+          : query.in('status', ['active', 'crowd_verified']);
 
         if (normalizedSeverity) {
-          fallbackQuery = fallbackQuery.eq('severity', normalizedSeverity);
+          query = query.eq('severity', normalizedSeverity);
         }
 
-        fallbackQuery = fallbackQuery.order('created_at', { ascending: false });
-        let fallbackResult: any = await fallbackQuery;
-
-        if (fallbackResult.error && isMissingColumnError(fallbackResult.error)) {
-          let baseQuery: any = supabase
-            .from('hazards')
-            .select(
-              'id, category, severity, latitude, longitude, landmark_context, sub_tag, status, created_at'
-            );
-
-          if (isVerifiedOnly) {
-            baseQuery = baseQuery.eq('status', 'crowd_verified');
-          } else {
-            baseQuery = baseQuery.in('status', ['active', 'crowd_verified']);
+        const result: any = await query.order('created_at', { ascending: false });
+        if (!result.error && result.data) {
+          if (columns === FULL_COLUMNS) {
+            return res.status(200).json(result.data as HazardRecord[]);
           }
-
-          if (normalizedSeverity) {
-            baseQuery = baseQuery.eq('severity', normalizedSeverity);
-          }
-
-          baseQuery = baseQuery.order('created_at', { ascending: false });
-          fallbackResult = await baseQuery;
-        }
-
-        if (!fallbackResult.error && fallbackResult.data) {
-          const mapped = (fallbackResult.data as HazardRecord[]).map((h) => ({
+          const mapped = (result.data as HazardRecord[]).map((h) => ({
             ...h,
             confirmations: h.confirmations ?? 1,
             resolved_count: h.resolved_count ?? 0,
           }));
           return res.status(200).json(mapped);
         }
-      } else if (!error && data) {
-        return res.status(200).json(data as HazardRecord[]);
+
+        if (!isMissingColumnError(result.error)) {
+          break;
+        }
       }
     }
 
-    // Mock fallback when Supabase is unconfigured or unavailable
-    let activeMocks = mockHazards.filter((h) => {
-      if (isVerifiedOnly) {
-        return h.status === 'crowd_verified';
-      }
-      return h.status === 'active' || h.status === 'crowd_verified';
-    });
-
-    if (normalizedSeverity) {
-      activeMocks = activeMocks.filter(
-        (h) => h.severity.toLowerCase() === normalizedSeverity.toLowerCase()
-      );
-    }
-
-    return res.status(200).json(activeMocks);
-  } catch (_err: unknown) {
-    let activeMocks = mockHazards.filter((h) => {
-      if (isVerifiedOnly) {
-        return h.status === 'crowd_verified';
-      }
-      return h.status === 'active' || h.status === 'crowd_verified';
-    });
-
-    if (normalizedSeverity) {
-      activeMocks = activeMocks.filter(
-        (h) => h.severity.toLowerCase() === normalizedSeverity.toLowerCase()
-      );
-    }
-
-    return res.status(200).json(activeMocks);
+    return res.status(200).json(filterMockHazards(isVerifiedOnly, normalizedSeverity));
+  } catch {
+    return res.status(200).json(filterMockHazards(isVerifiedOnly, normalizedSeverity));
   }
 });
 
-/**
- * POST /api/hazards
- * Create a new hazard record with validation.
- */
 router.post('/', async (req: Request, res: Response) => {
   try {
     const {
@@ -905,7 +697,6 @@ router.post('/', async (req: Request, res: Response) => {
       sub_tag,
     } = req.body as Partial<CreateHazardRequest>;
 
-    // Validate category
     if (!category || !VALID_CATEGORIES.includes(category as HazardCategory)) {
       return res.status(400).json({
         error: `Invalid category. Category must be one of: ${VALID_CATEGORIES.join(
@@ -914,7 +705,6 @@ router.post('/', async (req: Request, res: Response) => {
       });
     }
 
-    // Validate latitude and longitude
     if (
       latitude === undefined ||
       latitude === null ||
@@ -932,7 +722,6 @@ router.post('/', async (req: Request, res: Response) => {
       });
     }
 
-    // Validate severity if provided
     if (severity && !VALID_SEVERITIES.includes(severity as HazardSeverity)) {
       return res.status(400).json({
         error: `Invalid severity. Allowed values: ${VALID_SEVERITIES.join(', ')}`,
@@ -955,56 +744,39 @@ router.post('/', async (req: Request, res: Response) => {
         resolved_count: 0,
       };
 
-      let insertResult: any = await supabase
-        .from('hazards')
-        .insert(insertRecord)
-        .select(
-          'id, category, severity, latitude, longitude, landmark_context, sub_tag, status, created_at, confirmations, resolved_count'
-        )
-        .single();
+      const tiers: Array<{ columns: string; dropKey?: string }> = [
+        { columns: FULL_COLUMNS },
+        { columns: CONFIRM_COLUMNS, dropKey: 'resolved_count' },
+        { columns: BASE_COLUMNS, dropKey: 'confirmations' },
+      ];
 
-      let data = insertResult.data;
-      let error = insertResult.error;
-
-      if (error && isMissingColumnError(error)) {
-        delete insertRecord.resolved_count;
-        let retry: any = await supabase
+      for (const tier of tiers) {
+        if (tier.dropKey) {
+          delete insertRecord[tier.dropKey];
+        }
+        const result: any = await supabase
           .from('hazards')
           .insert(insertRecord)
-          .select(
-            'id, category, severity, latitude, longitude, landmark_context, sub_tag, status, created_at, confirmations'
-          )
+          .select(tier.columns)
           .single();
 
-        if (retry.error && isMissingColumnError(retry.error)) {
-          delete insertRecord.confirmations;
-          retry = await supabase
-            .from('hazards')
-            .insert(insertRecord)
-            .select(
-              'id, category, severity, latitude, longitude, landmark_context, sub_tag, status, created_at'
-            )
-            .single();
+        if (!result.error && result.data) {
+          if (tier.columns === FULL_COLUMNS) {
+            return res.status(201).json(result.data as HazardRecord);
+          }
+          return res.status(201).json({
+            ...result.data,
+            confirmations: 1,
+            resolved_count: 0,
+          } as HazardRecord);
         }
 
-        if (!retry.error && retry.data) {
-          return res
-            .status(201)
-            .json({
-              ...retry.data,
-              confirmations: 1,
-              resolved_count: 0,
-            } as HazardRecord);
+        if (!isMissingColumnError(result.error)) {
+          break;
         }
-        error = retry.error;
-      }
-
-      if (!error && data) {
-        return res.status(201).json(data as HazardRecord);
       }
     }
 
-    // Mock store fallback if Supabase is unconfigured or query fails
     const newHazard: HazardRecord = {
       id: `hazard-${Date.now()}`,
       category: category as HazardCategory,

@@ -8,31 +8,14 @@ import {
   View,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-export type HazardCategory =
-  | 'pothole_manhole'
-  | 'waterlogging'
-  | 'unlit_alley'
-  | 'unsafe_footbridge'
-  | 'extortion_spot';
+import type {
+  HazardCategory,
+  HazardRecord,
+  HazardSeverity,
+} from '../../../../../packages/shared/api-contract';
 
-export type HazardSeverity = 'Low' | 'Medium' | 'Critical';
-
-export interface Hazard {
-  id: string;
-  category: HazardCategory;
-  severity: HazardSeverity;
-  latitude: number;
-  longitude: number;
-  landmark_context?: string;
-  sub_tag?: string;
-  status: 'active' | 'pending' | 'verified' | 'crowd_verified' | 'resolved';
-  created_at: string;
-  confirmations?: number;
-  confirmations_count?: number;
-  confirmation_count?: number;
-}
-
-export type HazardRecord = Hazard;
+export type { HazardCategory, HazardRecord, HazardSeverity };
+export type Hazard = HazardRecord;
 
 export interface AlertsModalProps {
   visible: boolean;
@@ -245,19 +228,10 @@ export const AlertsModal: React.FC<AlertsModalProps> = ({
     const rawCount =
       typeof item.confirmations === 'number'
         ? item.confirmations
-        : typeof item.confirmations_count === 'number'
-          ? item.confirmations_count
-          : typeof item.confirmation_count === 'number'
-            ? item.confirmation_count
-            : item.status === 'crowd_verified'
-              ? 3
-              : 1;
+        : item.status === 'crowd_verified'
+          ? 3
+          : 1;
 
-    if (language === 'bn') {
-      return rawCount === 1
-        ? copy.confirmationSingular
-        : `${rawCount} ${copy.confirmationPlural}`;
-    }
     return rawCount === 1
       ? copy.confirmationSingular
       : `${rawCount} ${copy.confirmationPlural}`;
@@ -291,12 +265,10 @@ export const AlertsModal: React.FC<AlertsModalProps> = ({
             },
           ]}
         >
-          {/* Drag Handle */}
           <View
             style={[styles.dragHandle, { backgroundColor: theme.dragHandle }]}
           />
 
-          {/* Header */}
           <View style={[styles.header, { borderBottomColor: theme.border }]}>
             <View style={styles.titleGroup}>
               <Text style={[styles.title, { color: theme.textPrimary }]}>
@@ -337,7 +309,6 @@ export const AlertsModal: React.FC<AlertsModalProps> = ({
             </TouchableOpacity>
           </View>
 
-          {/* List of Sorted Alerts */}
           <FlatList
             data={sortedHazards}
             keyExtractor={(item) => item.id}

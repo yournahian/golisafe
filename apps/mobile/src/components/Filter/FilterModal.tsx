@@ -146,7 +146,6 @@ export const FilterModal: React.FC<FilterModalProps> = ({
   const severityOptions: Array<{
     id: HazardFilterState['severity'];
     label: string;
-    icon?: string;
   }> = [
     { id: 'all', label: copy.severityAll },
     { id: 'high', label: copy.severityHigh },
@@ -229,7 +228,6 @@ export const FilterModal: React.FC<FilterModalProps> = ({
             showsVerticalScrollIndicator={false}
             contentContainerStyle={styles.scrollContent}
           >
-            {/* 1. Risk Severity Chips */}
             <View style={styles.section}>
               <Text
                 style={[styles.sectionLabel, { color: theme.textSecondary }]}
@@ -279,7 +277,6 @@ export const FilterModal: React.FC<FilterModalProps> = ({
               </View>
             </View>
 
-            {/* 2. Verification Toggle */}
             <View style={styles.section}>
               <Text
                 style={[styles.sectionLabel, { color: theme.textSecondary }]}
@@ -357,7 +354,6 @@ export const FilterModal: React.FC<FilterModalProps> = ({
               </View>
             </View>
 
-            {/* 3. Distance Radius Chips */}
             <View style={styles.section}>
               <Text
                 style={[styles.sectionLabel, { color: theme.textSecondary }]}
@@ -408,7 +404,6 @@ export const FilterModal: React.FC<FilterModalProps> = ({
             </View>
           </ScrollView>
 
-          {/* 4. Bottom Action Row: Reset & Apply Filters */}
           <View style={[styles.actionRow, { borderTopColor: theme.border }]}>
             <TouchableOpacity
               style={[

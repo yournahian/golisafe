@@ -97,7 +97,6 @@ export const QuickReportModal: React.FC<QuickReportModalProps> = ({
   const [landmarkContext, setLandmarkContext] = useState<string>('');
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
 
-  // Automatically pre-fill latitude and longitude state
   const effectiveInitial = initialCoords ?? currentLocation;
   const [latitude, setLatitude] = useState<number>(effectiveInitial.latitude);
   const [longitude, setLongitude] = useState<number>(effectiveInitial.longitude);
@@ -179,10 +178,8 @@ export const QuickReportModal: React.FC<QuickReportModalProps> = ({
         />
 
         <View style={styles.sheetContainer}>
-          {/* Top Sheet Drag Indicator */}
           <View style={styles.dragHandle} />
 
-          {/* Header */}
           <View style={styles.header}>
             <View style={styles.titleGroup}>
               <View style={styles.titleRow}>
@@ -212,17 +209,6 @@ export const QuickReportModal: React.FC<QuickReportModalProps> = ({
             showsVerticalScrollIndicator={false}
             contentContainerStyle={styles.scrollContent}
           >
-            {/* Subtle banner if pin was dropped from map */}
-            {isPinDropped && (
-              <View style={styles.pinBanner}>
-                <Text style={styles.pinBannerText}>📍 Pin dropped from map</Text>
-                <Text style={styles.pinBannerCoords}>
-                  ({latitude.toFixed(5)}, {longitude.toFixed(5)})
-                </Text>
-              </View>
-            )}
-
-            {/* Section: Category Selection */}
             <View style={styles.section}>
               <Text style={styles.sectionLabel}>Select Hazard Category</Text>
               <View style={styles.categoryGrid}>
@@ -335,7 +321,6 @@ export const QuickReportModal: React.FC<QuickReportModalProps> = ({
               </View>
             </View>
 
-            {/* Section: Landmark / Context (Optional) */}
             <View style={styles.section}>
               <Text style={styles.sectionLabel}>Landmark / Context (Optional)</Text>
               <TextInput
@@ -348,7 +333,6 @@ export const QuickReportModal: React.FC<QuickReportModalProps> = ({
               />
             </View>
 
-            {/* First Demo Rule: Voice Note & Photo (Coming Soon) */}
             <View style={styles.demoButtonsRow}>
               <TouchableOpacity
                 style={styles.demoButton}
@@ -367,7 +351,6 @@ export const QuickReportModal: React.FC<QuickReportModalProps> = ({
               </TouchableOpacity>
             </View>
 
-            {/* Submit Button */}
             <TouchableOpacity
               style={[
                 styles.submitButton,
@@ -463,27 +446,6 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: '600',
     color: '#93C5FD',
-  },
-  pinBanner: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    backgroundColor: 'rgba(59, 130, 246, 0.12)',
-    borderWidth: 1,
-    borderColor: 'rgba(59, 130, 246, 0.28)',
-    borderRadius: 10,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-  },
-  pinBannerText: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: '#93C5FD',
-  },
-  pinBannerCoords: {
-    fontSize: 11,
-    fontWeight: '500',
-    color: '#94A3B8',
   },
   subtitle: {
     fontSize: 12,

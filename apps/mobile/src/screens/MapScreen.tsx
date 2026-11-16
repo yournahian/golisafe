@@ -439,7 +439,6 @@ const LIGHT_THEME = {
   riskText: '#B45309',
   closeBtnBg: '#F1F5F9',
   closeBtnText: '#64748B',
-  alertCardBg: '#F8FAFC',
   mapBg: '#E9E2D9',
 };
 
@@ -482,7 +481,6 @@ const DARK_THEME = {
   riskText: '#FCD34D',
   closeBtnBg: '#1B2642',
   closeBtnText: '#F1F5F9',
-  alertCardBg: '#1B2642',
   mapBg: '#0B1120',
 };
 
@@ -622,14 +620,6 @@ function HazardCategoryIcon({
 const UI_COPY = {
   en: {
     title: 'GoliSafe',
-    city: 'Dhaka',
-    searchPlaceholder: 'Search places or hazards',
-    mapTab: 'Map',
-    alertsTab: 'Alerts',
-    reportTab: 'Report',
-    nearbyAlerts: 'Nearby Alerts',
-    noHazards: 'No matching hazards found in this area.',
-    refresh: 'Refresh',
     mapOptions: 'Map options',
     viewMode: 'VIEW MODE',
     display: 'DISPLAY',
@@ -637,14 +627,6 @@ const UI_COPY = {
   },
   bn: {
     title: 'GoliSafe',
-    city: 'ঢাকা',
-    searchPlaceholder: 'স্থান বা ঝুঁকি খুঁজুন',
-    mapTab: 'মানচিত্র',
-    alertsTab: 'সতর্কতা',
-    reportTab: 'রিপোর্ট',
-    nearbyAlerts: 'নিকটবর্তী সতর্কতা',
-    noHazards: 'এই এলাকায় কোনো ঝুঁকি পাওয়া যায়নি।',
-    refresh: 'রিফ্রেশ',
     mapOptions: 'মানচিত্র অপশন',
     viewMode: 'ভিউ মোড',
     display: 'ডিসপ্লে',
@@ -1045,7 +1027,6 @@ const LEAFLET_HTML = `<!DOCTYPE html>
 
 export default function MapScreen() {
   const [hazards, setHazards] = useState<HazardRecord[]>(DHAKA_SEED_HAZARDS);
-  const [loading, setLoading] = useState<boolean>(false);
   const [locale, setLocale] = useState<Language>('en');
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [searchDropdownOpen, setSearchDropdownOpen] = useState<boolean>(false);
@@ -1063,7 +1044,6 @@ export default function MapScreen() {
   const [isNighttime, setIsNighttime] = useState<boolean>(true);
   const [demoMode, setDemoMode] = useState<boolean>(false);
   const [selectedHazardId, setSelectedHazardId] = useState<string | null>(null);
-  const [detailModalVisible, setDetailModalVisible] = useState<boolean>(false);
   const [reportModalVisible, setReportModalVisible] = useState<boolean>(false);
   const [tappedLocation, setTappedLocation] = useState<{
     latitude: number;
@@ -1086,7 +1066,6 @@ export default function MapScreen() {
   const t = TRANSLATIONS[locale];
 
   const loadHazards = useCallback(async () => {
-    setLoading(true);
     try {
       const data = await fetchHazards();
       if (Array.isArray(data) && data.length >= 8) {
@@ -1103,8 +1082,6 @@ export default function MapScreen() {
       }
     } catch {
       setHazards((prev) => (prev.length > 0 ? prev : DHAKA_SEED_HAZARDS));
-    } finally {
-      setLoading(false);
     }
   }, []);
 
@@ -1288,7 +1265,6 @@ export default function MapScreen() {
       );
       if (nextStatus === 'resolved') {
         setSelectedHazardId(null);
-        setDetailModalVisible(false);
       }
     } catch {
       const nextResolved = currentResolved + 1;
@@ -1302,7 +1278,6 @@ export default function MapScreen() {
       );
       if (nextStatus === 'resolved') {
         setSelectedHazardId(null);
-        setDetailModalVisible(false);
       }
     } finally {
       setResolvingId(null);
@@ -1524,12 +1499,6 @@ export default function MapScreen() {
     webViewRef.current?.injectJavaScript(
       'window.recenterDhaka && window.recenterDhaka(); true;',
     );
-  };
-
-  const handleResetFilters = () => {
-    setViewMode('all');
-    setCategoryFilter('all');
-    setSearchQuery('');
   };
 
   const hasActiveFilter =
@@ -2591,128 +2560,6 @@ export default function MapScreen() {
         );
       })()}
 
-      {/* Hazard Full Details & Confirm Modal */}
-      <Modal
-        visible={detailModalVisible && Boolean(selectedHazard)}
-        transparent
-        animationType="slide"
-        onRequestClose={() => setDetailModalVisible(false)}
-      >
-        {selectedHazard && (() => {
-          const meta = CATEGORY_META[selectedHazard.category];
-          const accent = isNighttime ? meta?.color : meta?.lightColor;
-          return (
-            <View style={styles.alertsBackdrop}>
-              <View
-                style={[
-                  styles.detailSheet,
-                  {
-                    backgroundColor: theme.surface,
-                    borderColor: theme.border,
-                  },
-                ]}
-              >
-                <View
-                  style={[
-                    styles.alertsHeader,
-                    { borderBottomColor: theme.border },
-                  ]}
-                >
-                  <View style={styles.selectedCategoryRow}>
-                    <HazardCategoryIcon
-                      category={selectedHazard.category}
-                      color={accent || '#EF4444'}
-                      size={18}
-                    />
-                    <Text
-                      style={[
-                        styles.detailCategoryTitle,
-                        { color: accent || theme.text },
-                      ]}
-                    >
-                      {locale === 'bn' ? meta?.nameBn : meta?.name}
-                    </Text>
-                  </View>
-                  <TouchableOpacity
-                    style={[
-                      styles.layersCloseBtn,
-                      {
-                        backgroundColor: theme.closeBtnBg,
-                        borderColor: theme.borderStrong,
-                      },
-                    ]}
-                    onPress={() => setDetailModalVisible(false)}
-                  >
-                    <Text
-                      style={[
-                        styles.layersCloseText,
-                        { color: theme.closeBtnText },
-                      ]}
-                    >
-                      ×
-                    </Text>
-                  </TouchableOpacity>
-                </View>
-
-                <View style={styles.detailBody}>
-                  <Text style={[styles.detailTitle, { color: theme.text }]}>
-                    {selectedHazard.landmark_context || meta?.name}
-                  </Text>
-                  <Text
-                    style={[styles.detailMeta, { color: theme.textSecondary }]}
-                  >
-                    Severity: {selectedHazard.severity} · Status:{' '}
-                    {selectedHazard.status}
-                  </Text>
-                  {selectedHazard.sub_tag ? (
-                    <View style={styles.detailSubtagBadge}>
-                      <Text style={styles.detailSubtagText}>
-                        {selectedHazard.sub_tag}
-                      </Text>
-                    </View>
-                  ) : null}
-                  <Text
-                    style={[
-                      styles.detailCoords,
-                      { color: theme.textSecondary },
-                    ]}
-                  >
-                    Coordinates: {selectedHazard.latitude.toFixed(5)},{' '}
-                    {selectedHazard.longitude.toFixed(5)}
-                  </Text>
-                  <Text
-                    style={[styles.detailDescription, { color: theme.text }]}
-                  >
-                    Community-reported urban safety hazard in Dhaka. Exercise
-                    caution when passing through this zone, especially after dark.
-                  </Text>
-
-                  <TouchableOpacity
-                    style={styles.confirmHazardBtn}
-                    onPress={async () => {
-                      await handleConfirmHazard(selectedHazard);
-                      setDetailModalVisible(false);
-                    }}
-                    disabled={confirmingId === selectedHazard.id}
-                    activeOpacity={0.85}
-                  >
-                    {confirmingId === selectedHazard.id ? (
-                      <ActivityIndicator size="small" color="#FFFFFF" />
-                    ) : (
-                      <Text style={styles.confirmHazardBtnText}>
-                        {locale === 'bn'
-                          ? 'ভেরিফাই করুন (+১)'
-                          : '👍 Confirm Hazard (+1)'}
-                      </Text>
-                    )}
-                  </TouchableOpacity>
-                </View>
-              </View>
-            </View>
-          );
-        })()}
-      </Modal>
-
       <AlertsModal
         visible={alertsSheetOpen}
         onClose={() => setAlertsSheetOpen(false)}
@@ -3007,51 +2854,6 @@ const styles = StyleSheet.create({
   },
   modulePillText: {
     fontSize: 12,
-    fontWeight: '600',
-  },
-  inlineFilterCard: {
-    marginTop: 10,
-    padding: 10,
-    borderRadius: 12,
-    borderWidth: 1,
-    gap: 8,
-  },
-  inlineFilterHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-  },
-  inlineFilterTitle: {
-    fontSize: 12,
-    fontWeight: '700',
-  },
-  inlineFilterActions: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-  },
-  resetLink: {
-    fontSize: 11,
-    fontWeight: '600',
-  },
-  closeX: {
-    fontSize: 18,
-    lineHeight: 18,
-    fontWeight: '600',
-  },
-  inlineModePills: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 6,
-  },
-  modeChip: {
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderRadius: 999,
-    borderWidth: 1,
-  },
-  modeChipText: {
-    fontSize: 11,
     fontWeight: '600',
   },
   mapControls: {
@@ -3358,153 +3160,6 @@ const styles = StyleSheet.create({
   confirmCardBtnText: {
     fontSize: 12.5,
     fontWeight: '700',
-  },
-  viewDetailsBtn: {
-    flex: 1,
-    height: 40,
-    borderRadius: 10,
-    backgroundColor: '#2563EB',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  viewDetailsBtnText: {
-    color: '#FFFFFF',
-    fontSize: 13,
-    fontWeight: '700',
-  },
-  detailSheet: {
-    borderTopLeftRadius: 22,
-    borderTopRightRadius: 22,
-    borderTopWidth: 1.5,
-    paddingHorizontal: 16,
-    paddingTop: 14,
-    paddingBottom: 28,
-  },
-  detailCategoryTitle: {
-    fontSize: 14,
-    fontWeight: '700',
-  },
-  detailBody: {
-    paddingTop: 14,
-    gap: 8,
-  },
-  detailTitle: {
-    fontSize: 18,
-    fontWeight: '700',
-  },
-  detailMeta: {
-    fontSize: 12.5,
-    fontWeight: '600',
-  },
-  detailSubtagBadge: {
-    alignSelf: 'flex-start',
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 8,
-    backgroundColor: 'rgba(249, 115, 22, 0.18)',
-    borderWidth: 1,
-    borderColor: '#FB923C',
-  },
-  detailSubtagText: {
-    color: '#EA580C',
-    fontSize: 11.5,
-    fontWeight: '600',
-  },
-  detailCoords: {
-    fontSize: 11.5,
-  },
-  detailDescription: {
-    fontSize: 13,
-    lineHeight: 19,
-    marginTop: 2,
-  },
-  confirmHazardBtn: {
-    marginTop: 10,
-    height: 46,
-    borderRadius: 12,
-    backgroundColor: '#2563EB',
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-  },
-  confirmHazardBtnText: {
-    color: '#FFFFFF',
-    fontSize: 14,
-    fontWeight: '700',
-  },
-  alertsBackdrop: {
-    flex: 1,
-    backgroundColor: 'rgba(15, 23, 42, 0.65)',
-    justifyContent: 'flex-end',
-  },
-  alertsSheet: {
-    maxHeight: '76%',
-    borderTopLeftRadius: 22,
-    borderTopRightRadius: 22,
-    borderTopWidth: 1.5,
-    paddingHorizontal: 16,
-    paddingTop: 14,
-    paddingBottom: 24,
-  },
-  alertsHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingBottom: 12,
-    borderBottomWidth: 1,
-  },
-  alertsTitle: {
-    fontSize: 16,
-    fontWeight: '700',
-  },
-  alertsHeaderActions: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  alertsRefreshBtn: {
-    height: 28,
-    paddingHorizontal: 10,
-    borderRadius: 8,
-    borderWidth: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  alertsRefreshText: {
-    fontSize: 11,
-    fontWeight: '600',
-  },
-  alertsList: {
-    paddingTop: 12,
-    gap: 10,
-  },
-  emptyAlertsText: {
-    fontSize: 13,
-    textAlign: 'center',
-    paddingVertical: 24,
-  },
-  alertCard: {
-    padding: 12,
-    borderRadius: 12,
-    borderWidth: 1,
-    gap: 4,
-  },
-  alertCardTop: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-  },
-  alertCardCategory: {
-    fontSize: 11,
-    fontWeight: '700',
-  },
-  alertCardTitle: {
-    fontSize: 14,
-    fontWeight: '700',
-  },
-  alertCardSub: {
-    fontSize: 11,
   },
   bottomNav: {
     position: 'absolute',
