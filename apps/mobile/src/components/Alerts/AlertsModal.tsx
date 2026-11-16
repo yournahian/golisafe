@@ -25,7 +25,7 @@ export interface Hazard {
   longitude: number;
   landmark_context?: string;
   sub_tag?: string;
-  status: 'active' | 'crowd_verified' | 'resolved';
+  status: 'active' | 'pending' | 'verified' | 'crowd_verified' | 'resolved';
   created_at: string;
   confirmations?: number;
   confirmations_count?: number;

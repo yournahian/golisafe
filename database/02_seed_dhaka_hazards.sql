@@ -7,7 +7,9 @@ INSERT INTO hazards (
   landmark_context,
   sub_tag,
   status,
-  confirmations
+  confirmations,
+  resolved_count,
+  expires_at
 )
 VALUES
   (
@@ -18,7 +20,9 @@ VALUES
     'Dhanmondi 27, near Rapa Plaza',
     'Open manhole without cover',
     'crowd_verified',
-    5
+    5,
+    0,
+    NOW() + INTERVAL '12 hours'
   ),
   (
     'waterlogging',
@@ -28,7 +32,9 @@ VALUES
     'Mirpur 10 Circle, opposite Shah Ali Plaza',
     'Knee-deep rainwater',
     'active',
-    2
+    2,
+    0,
+    NOW() + INTERVAL '12 hours'
   ),
   (
     'unsafe_footbridge',
@@ -38,7 +44,9 @@ VALUES
     'Farmgate Footbridge near Ananda Cinema',
     'Broken steps and unlit stairs',
     'crowd_verified',
-    6
+    6,
+    0,
+    NOW() + INTERVAL '12 hours'
   ),
   (
     'unlit_alley',
@@ -48,7 +56,9 @@ VALUES
     'Underneath Mohakhali Flyover, Amtoli side',
     'Broken streetlights',
     'active',
-    1
+    1,
+    0,
+    NOW() + INTERVAL '12 hours'
   ),
   (
     'waterlogging',
@@ -58,7 +68,9 @@ VALUES
     'Middle Badda Link Road',
     'Drain overflow',
     'active',
-    2
+    2,
+    1,
+    NOW() + INTERVAL '12 hours'
   ),
   (
     'extortion_spot',
@@ -68,7 +80,9 @@ VALUES
     'Shahbagh Mor near Public Library gate',
     'Illegal street toll',
     'active',
-    1
+    1,
+    0,
+    NOW() + INTERVAL '12 hours'
   ),
   (
     'pothole_manhole',
@@ -78,7 +92,9 @@ VALUES
     'Motijheel Shapla Chattar service lane',
     'Deep pothole',
     'active',
-    2
+    2,
+    0,
+    NOW() + INTERVAL '12 hours'
   ),
   (
     'unlit_alley',
@@ -88,7 +104,9 @@ VALUES
     'Uttara Sector 7, Road 12',
     'Dim street lighting',
     'resolved',
-    1
+    1,
+    1,
+    NOW() + INTERVAL '12 hours'
   ),
   (
     'extortion_spot',
@@ -98,7 +116,9 @@ VALUES
     'Mohammadpur Town Hall Market approach',
     'Late-night toll collection',
     'crowd_verified',
-    4
+    4,
+    0,
+    NOW() + INTERVAL '12 hours'
   ),
   (
     'unsafe_footbridge',
@@ -108,7 +128,9 @@ VALUES
     'Banani Kakoli Footbridge',
     'Slippery tiles when wet',
     'active',
-    1
+    1,
+    0,
+    NOW() + INTERVAL '12 hours'
   ),
   (
     'pothole_manhole',
@@ -118,7 +140,9 @@ VALUES
     'Jatrabari Flyover ramp, Demra side',
     'Collapsed asphalt',
     'crowd_verified',
-    3
+    3,
+    0,
+    NOW() + INTERVAL '12 hours'
   ),
   (
     'unlit_alley',
@@ -128,5 +152,7 @@ VALUES
     'Bijoy Sarani side lane toward Tejgaon',
     'Dark pedestrian stretch',
     'active',
-    2
+    2,
+    0,
+    NOW() + INTERVAL '12 hours'
   );
