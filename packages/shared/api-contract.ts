@@ -15,8 +15,10 @@ export interface HazardRecord {
   longitude: number;
   landmark_context?: string;
   sub_tag?: string;
-  status: 'active' | 'crowd_verified' | 'resolved';
+  status: 'active' | 'pending' | 'verified' | 'crowd_verified' | 'resolved';
   confirmations?: number;
+  resolved_count?: number;
+  expires_at?: string;
   created_at: string;
 }
 
