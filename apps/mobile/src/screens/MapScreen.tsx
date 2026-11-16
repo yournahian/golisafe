@@ -21,12 +21,22 @@ import type {
   HazardRecord,
 } from '../../../../packages/shared/api-contract';
 import AlertsModal from '../components/Alerts/AlertsModal';
+import {
+  DEFAULT_HAZARD_FILTERS,
+  FilterModal,
+  type HazardFilterState,
+} from '../components/Filter/FilterModal';
 import QuickReportModal from '../components/Report/QuickReportModal';
-import { confirmHazard, fetchHazards, submitHazard } from '../services/api';
+import { TRANSLATIONS, type Language } from '../i18n/translations';
+import {
+  confirmHazard,
+  fetchHazards,
+  resolveHazard,
+  submitHazard,
+} from '../services/api';
 
 type ViewMode = 'all' | 'pedestrian_night' | 'driver_biker';
 type CategoryFilter = 'all' | HazardCategory;
-type Locale = 'en' | 'bn';
 type BottomTab = 'map' | 'alerts' | 'report';
 
 const DHAKA_CENTER = {
@@ -52,6 +62,7 @@ const DHAKA_STREETS: Array<{
   { label: 'Rampura TV Center Road', latitude: 23.7652, longitude: 90.4221 },
   { label: 'Mirpur 10 Roundabout', latitude: 23.8069, longitude: 90.3687 },
   { label: 'Uttara Sector 7 Jasimuddin Ave', latitude: 23.8615, longitude: 90.4002 },
+  { label: 'Motijheel Shapla Chattar', latitude: 23.7298, longitude: 90.4176 },
   { label: 'Jatrabari Flyover Entry', latitude: 23.7104, longitude: 90.4348 },
 ];
 
@@ -801,6 +812,14 @@ const LEAFLET_HTML = `<!DOCTYPE html>
       border: 3px solid #FFFFFF;
       box-shadow: 0 0 0 8px rgba(37, 99, 235, 0.25);
     }
+    @keyframes dangerPulse {
+      0% { stroke-opacity: 0.9; fill-opacity: 0.22; }
+      50% { stroke-opacity: 0.45; fill-opacity: 0.08; }
+      100% { stroke-opacity: 0.9; fill-opacity: 0.22; }
+    }
+    .danger-radius-ring {
+      animation: dangerPulse 2.1s ease-in-out infinite;
+    }
   </style>
 </head>
 <body class="night-mode">
@@ -833,8 +852,33 @@ const LEAFLET_HTML = `<!DOCTYPE html>
     }).addTo(map);
 
     const hazardLayer = L.layerGroup().addTo(map);
+    const dangerRingsLayer = L.layerGroup().addTo(map);
     const routeLayer = L.layerGroup().addTo(map);
     let tappedPinMarker = null;
+
+    window.renderDangerRings = function(enabled, hazards) {
+      dangerRingsLayer.clearLayers();
+      if (!enabled || !Array.isArray(hazards)) return;
+      hazards.forEach(function(h) {
+        if (
+          h.severity === 'Critical' &&
+          h.status !== 'resolved' &&
+          typeof h.latitude === 'number' &&
+          typeof h.longitude === 'number'
+        ) {
+          L.circle([h.latitude, h.longitude], {
+            radius: 250,
+            color: '#EF4444',
+            weight: 2,
+            dashArray: '6 5',
+            fillColor: '#EF4444',
+            fillOpacity: 0.18,
+            className: 'danger-radius-ring',
+            interactive: false
+          }).addTo(dangerRingsLayer);
+        }
+      });
+    };
 
     const tappedPinIcon = L.divIcon({
       className: '',
@@ -1002,9 +1046,15 @@ const LEAFLET_HTML = `<!DOCTYPE html>
 export default function MapScreen() {
   const [hazards, setHazards] = useState<HazardRecord[]>(DHAKA_SEED_HAZARDS);
   const [loading, setLoading] = useState<boolean>(false);
-  const [locale, setLocale] = useState<Locale>('en');
+  const [locale, setLocale] = useState<Language>('en');
   const [searchQuery, setSearchQuery] = useState<string>('');
-  const [filterSheetOpen, setFilterSheetOpen] = useState<boolean>(false);
+  const [searchDropdownOpen, setSearchDropdownOpen] = useState<boolean>(false);
+  const [filterModalOpen, setFilterModalOpen] = useState<boolean>(false);
+  const [hazardFilters, setHazardFilters] = useState<HazardFilterState>(
+    DEFAULT_HAZARD_FILTERS,
+  );
+  const [showDangerRings, setShowDangerRings] = useState<boolean>(false);
+  const [layerToast, setLayerToast] = useState<string | null>(null);
   const [layersModalOpen, setLayersModalOpen] = useState<boolean>(false);
   const [alertsSheetOpen, setAlertsSheetOpen] = useState<boolean>(false);
   const [viewMode, setViewMode] = useState<ViewMode>('all');
@@ -1025,12 +1075,15 @@ export default function MapScreen() {
   const [activeRoute, setActiveRoute] = useState<SafeRouteState | null>(null);
   const [routeLoading, setRouteLoading] = useState<boolean>(false);
   const [confirmingId, setConfirmingId] = useState<string | null>(null);
+  const [resolvingId, setResolvingId] = useState<string | null>(null);
   const [mapCenter, setMapCenter] = useState(DHAKA_CENTER);
   const [webViewReady, setWebViewReady] = useState<boolean>(false);
   const webViewRef = useRef<WebView>(null);
+  const layerToastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const theme = isNighttime ? DARK_THEME : LIGHT_THEME;
   const copy = UI_COPY[locale];
+  const t = TRANSLATIONS[locale];
 
   const loadHazards = useCallback(async () => {
     setLoading(true);
@@ -1211,8 +1264,80 @@ export default function MapScreen() {
     }
   }, []);
 
+  const handleResolveHazard = useCallback(async (hazard: HazardRecord) => {
+    setResolvingId(hazard.id);
+    const currentResolved = hazard.resolved_count ?? 0;
+    try {
+      const updated = await resolveHazard(hazard.id);
+      const nextResolved = updated.resolved_count ?? currentResolved + 1;
+      const nextStatus =
+        updated.status === 'resolved' || nextResolved >= 3
+          ? 'resolved'
+          : hazard.status;
+      setHazards((prev) =>
+        prev.map((h) =>
+          h.id === hazard.id
+            ? {
+                ...h,
+                ...updated,
+                resolved_count: nextResolved,
+                status: nextStatus,
+              }
+            : h,
+        ),
+      );
+      if (nextStatus === 'resolved') {
+        setSelectedHazardId(null);
+        setDetailModalVisible(false);
+      }
+    } catch {
+      const nextResolved = currentResolved + 1;
+      const nextStatus = nextResolved >= 3 ? 'resolved' : hazard.status;
+      setHazards((prev) =>
+        prev.map((h) =>
+          h.id === hazard.id
+            ? { ...h, resolved_count: nextResolved, status: nextStatus }
+            : h,
+        ),
+      );
+      if (nextStatus === 'resolved') {
+        setSelectedHazardId(null);
+        setDetailModalVisible(false);
+      }
+    } finally {
+      setResolvingId(null);
+    }
+  }, []);
+
+  const handleToggleDangerRings = useCallback(() => {
+    setShowDangerRings((prev) => {
+      const next = !prev;
+      const toastMsg =
+        locale === 'bn'
+          ? next
+            ? 'বিপদসীমা রিং (২৫০ মি): চালু'
+            : 'বিপদসীমা রিং: বন্ধ'
+          : next
+            ? 'Danger Radius Rings (250m): ON'
+            : 'Danger Radius Rings: OFF';
+      setLayerToast(toastMsg);
+      if (layerToastTimerRef.current) {
+        clearTimeout(layerToastTimerRef.current);
+      }
+      layerToastTimerRef.current = setTimeout(() => {
+        setLayerToast(null);
+      }, 2400);
+      return next;
+    });
+  }, [locale]);
+
+  const hasActiveModalFilters =
+    hazardFilters.severity !== 'all' ||
+    hazardFilters.verifiedOnly ||
+    hazardFilters.maxDistanceKm !== null;
+
   const filteredHazards = useMemo(() => {
-    let list = hazards;
+    let list = hazards.filter((h) => h.status !== 'resolved');
 
     if (viewMode === 'pedestrian_night') {
       list = list.filter(
@@ -1234,6 +1359,36 @@ export default function MapScreen() {
       list = list.filter((h) => h.category === categoryFilter);
     }
 
+    if (hazardFilters.severity === 'high') {
+      list = list.filter((h) => h.severity === 'Critical');
+    } else if (hazardFilters.severity === 'medium') {
+      list = list.filter((h) => h.severity === 'Medium');
+    } else if (hazardFilters.severity === 'low') {
+      list = list.filter((h) => h.severity === 'Low');
+    }
+
+    if (hazardFilters.verifiedOnly) {
+      list = list.filter(
+        (h) =>
+          h.status === 'crowd_verified' ||
+          h.status === 'verified' ||
+          (h.confirmations ?? 0) >= 3,
+      );
+    }
+
+    if (hazardFilters.maxDistanceKm !== null) {
+      const maxMeters = hazardFilters.maxDistanceKm * 1000;
+      list = list.filter(
+        (h) =>
+          computeDistanceMeters(
+            DHAKA_CENTER.latitude,
+            DHAKA_CENTER.longitude,
+            h.latitude,
+            h.longitude,
+          ) <= maxMeters,
+      );
+    }
+
     const q = searchQuery.trim().toLowerCase();
     if (q.length > 0) {
       list = list.filter((h) => {
@@ -1242,13 +1397,57 @@ export default function MapScreen() {
           (h.landmark_context || '').toLowerCase().includes(q) ||
           (h.sub_tag || '').toLowerCase().includes(q) ||
           meta.name.toLowerCase().includes(q) ||
+          meta.nameBn.toLowerCase().includes(q) ||
           h.severity.toLowerCase().includes(q)
         );
       });
     }
 
     return list;
-  }, [hazards, viewMode, categoryFilter, searchQuery]);
+  }, [hazards, viewMode, categoryFilter, hazardFilters, searchQuery]);
+
+  const searchSuggestions = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    if (q.length === 0) return [];
+
+    const hazardMatches = hazards
+      .filter((h) => h.status !== 'resolved')
+      .filter((h) => {
+        const meta = CATEGORY_META[h.category];
+        return (
+          (h.landmark_context || '').toLowerCase().includes(q) ||
+          (h.sub_tag || '').toLowerCase().includes(q) ||
+          meta.name.toLowerCase().includes(q) ||
+          meta.nameBn.toLowerCase().includes(q)
+        );
+      })
+      .slice(0, 4)
+      .map((h) => ({
+        key: `hazard-${h.id}`,
+        kind: 'hazard' as const,
+        title: h.landmark_context || CATEGORY_META[h.category].name,
+        subtitle: `${CATEGORY_META[h.category].name}${h.sub_tag ? ` · ${h.sub_tag}` : ''}`,
+        latitude: h.latitude,
+        longitude: h.longitude,
+        hazard: h,
+      }));
+
+    const landmarkMatches = DHAKA_STREETS.filter((s) =>
+      s.label.toLowerCase().includes(q),
+    )
+      .slice(0, 4)
+      .map((s) => ({
+        key: `landmark-${s.label}`,
+        kind: 'landmark' as const,
+        title: s.label,
+        subtitle: 'Dhaka Landmark',
+        latitude: s.latitude,
+        longitude: s.longitude,
+        hazard: null,
+      }));
+
+    return [...hazardMatches, ...landmarkMatches].slice(0, 6);
+  }, [hazards, searchQuery]);
 
   const selectedHazard = useMemo(
     () => filteredHazards.find((h) => h.id === selectedHazardId) ?? null,
@@ -1262,6 +1461,14 @@ export default function MapScreen() {
       `window.renderHazards && window.renderHazards(${payload}); true;`,
     );
   }, [filteredHazards, webViewReady]);
+
+  useEffect(() => {
+    if (!webViewReady || !webViewRef.current) return;
+    const payload = JSON.stringify(filteredHazards);
+    webViewRef.current.injectJavaScript(
+      `window.renderDangerRings && window.renderDangerRings(${showDangerRings}, ${payload}); true;`,
+    );
+  }, [showDangerRings, filteredHazards, webViewReady]);
 
   useEffect(() => {
     if (!webViewReady || !webViewRef.current) return;
@@ -1403,7 +1610,7 @@ export default function MapScreen() {
               ]}
             >
               <Text style={[styles.locationText, { color: theme.pillText }]}>
-                {copy.city}
+                {t.cityBadge}
               </Text>
             </View>
           </View>
@@ -1426,22 +1633,33 @@ export default function MapScreen() {
           />
           <TextInput
             style={[styles.searchInput, { color: theme.text }]}
-            placeholder={copy.searchPlaceholder}
+            placeholder={t.searchPlaceholder}
             placeholderTextColor={theme.searchPlaceholder}
             value={searchQuery}
-            onChangeText={setSearchQuery}
+            onChangeText={(text) => {
+              setSearchQuery(text);
+              setSearchDropdownOpen(text.trim().length > 0);
+            }}
+            onFocus={() => {
+              if (searchQuery.trim().length > 0) {
+                setSearchDropdownOpen(true);
+              }
+            }}
             returnKeyType="search"
           />
           {searchQuery.trim().length > 0 && (
             <TouchableOpacity
               style={styles.searchClearBtn}
-              onPress={() => setSearchQuery('')}
+              onPress={() => {
+                setSearchQuery('');
+                setSearchDropdownOpen(false);
+              }}
               activeOpacity={0.8}
             >
               <Text
                 style={[styles.searchClearText, { color: theme.textSecondary }]}
               >
-                Clear
+                {locale === 'bn' ? 'মুছুন' : 'Clear'}
               </Text>
             </TouchableOpacity>
           )}
@@ -1452,14 +1670,15 @@ export default function MapScreen() {
                 backgroundColor: theme.filterBtnBg,
                 borderColor: theme.filterBtnBorder,
               },
-              (filterSheetOpen || hasActiveFilter) && {
+              (filterModalOpen || hasActiveModalFilters || hasActiveFilter) && {
                 borderColor: theme.primary,
                 backgroundColor: theme.primarySurface,
               },
             ]}
             onPress={() => {
               setLayersModalOpen(false);
-              setFilterSheetOpen((v) => !v);
+              setSearchDropdownOpen(false);
+              setFilterModalOpen(true);
             }}
             activeOpacity={0.8}
           >
@@ -1467,13 +1686,93 @@ export default function MapScreen() {
               name="options-outline"
               size={18}
               color={
-                filterSheetOpen || hasActiveFilter
+                filterModalOpen || hasActiveModalFilters || hasActiveFilter
                   ? theme.primaryText
                   : theme.filterBtnIcon
               }
             />
+            {hasActiveModalFilters && <View style={styles.filterActiveDot} />}
           </TouchableOpacity>
         </View>
+
+        {/* Live Search Autocomplete Dropdown */}
+        {searchDropdownOpen && searchSuggestions.length > 0 && (
+          <View
+            style={[
+              styles.searchDropdown,
+              {
+                backgroundColor: theme.surface,
+                borderColor: theme.border,
+              },
+            ]}
+          >
+            {searchSuggestions.map((item, idx) => (
+              <TouchableOpacity
+                key={item.key}
+                style={[
+                  styles.searchSuggestionRow,
+                  idx < searchSuggestions.length - 1 && {
+                    borderBottomWidth: 1,
+                    borderBottomColor: theme.border,
+                  },
+                ]}
+                onPress={() => {
+                  setSearchDropdownOpen(false);
+                  if (item.kind === 'hazard' && item.hazard) {
+                    clearTappedPinOnMap();
+                    setSelectedHazardId(item.hazard.id);
+                    webViewRef.current?.injectJavaScript(
+                      `window.clearTappedPin && window.clearTappedPin(); window.focusHazard && window.focusHazard(${item.latitude}, ${item.longitude}); true;`,
+                    );
+                  } else {
+                    setSelectedHazardId(null);
+                    setTappedLocation(
+                      resolveDhakaTappedLocation(
+                        item.latitude,
+                        item.longitude,
+                        DHAKA_CENTER,
+                      ),
+                    );
+                    webViewRef.current?.injectJavaScript(
+                      `window.placeTappedPin && window.placeTappedPin(${item.latitude}, ${item.longitude}); window.focusHazard && window.focusHazard(${item.latitude}, ${item.longitude}); true;`,
+                    );
+                  }
+                }}
+                activeOpacity={0.8}
+              >
+                <Ionicons
+                  name={
+                    item.kind === 'hazard'
+                      ? 'warning-outline'
+                      : 'location-outline'
+                  }
+                  size={16}
+                  color={item.kind === 'hazard' ? '#F59E0B' : theme.primary}
+                />
+                <View style={styles.searchSuggestionTextWrap}>
+                  <Text
+                    style={[
+                      styles.searchSuggestionTitle,
+                      { color: theme.text },
+                    ]}
+                    numberOfLines={1}
+                  >
+                    {item.title}
+                  </Text>
+                  <Text
+                    style={[
+                      styles.searchSuggestionSub,
+                      { color: theme.textSecondary },
+                    ]}
+                    numberOfLines={1}
+                  >
+                    {item.subtitle}
+                  </Text>
+                </View>
+              </TouchableOpacity>
+            ))}
+          </View>
+        )}
 
         {/* Horizontal Category Pills with Exact Figma SVG Icons */}
         <ScrollView
@@ -1488,6 +1787,20 @@ export default function MapScreen() {
             const activeSurface = isNighttime
               ? meta.surface
               : meta.lightSurface;
+            const pillLabel =
+              catId === 'extortion_spot'
+                ? t.categories['ChandaAlert']
+                : catId === 'unlit_alley'
+                  ? t.categories['Dark-Zone Safety']
+                  : catId === 'waterlogging'
+                    ? locale === 'bn'
+                      ? t.categories.WaterLogging
+                      : meta.name
+                    : catId === 'pothole_manhole'
+                      ? t.categories['Road Hazard']
+                      : locale === 'bn'
+                        ? meta.nameBn
+                        : meta.name;
 
             return (
               <TouchableOpacity
@@ -1527,86 +1840,31 @@ export default function MapScreen() {
                     active && { color: accent, fontWeight: '700' },
                   ]}
                 >
-                  {locale === 'bn' ? meta.nameBn : meta.name}
+                  {pillLabel}
                 </Text>
               </TouchableOpacity>
             );
           })}
         </ScrollView>
-
-        {/* Optional Quick Filter Bar when Filter icon is toggled */}
-        {filterSheetOpen && (
-          <View
-            style={[
-              styles.inlineFilterCard,
-              {
-                backgroundColor: theme.surface,
-                borderColor: theme.border,
-              },
-            ]}
-          >
-            <View style={styles.inlineFilterHeader}>
-              <Text style={[styles.inlineFilterTitle, { color: theme.text }]}>
-                Quick Filters
-              </Text>
-              <View style={styles.inlineFilterActions}>
-                {hasActiveFilter && (
-                  <TouchableOpacity onPress={handleResetFilters}>
-                    <Text style={[styles.resetLink, { color: theme.primary }]}>
-                      Reset
-                    </Text>
-                  </TouchableOpacity>
-                )}
-                <TouchableOpacity onPress={() => setFilterSheetOpen(false)}>
-                  <Text
-                    style={[styles.closeX, { color: theme.textSecondary }]}
-                  >
-                    ×
-                  </Text>
-                </TouchableOpacity>
-              </View>
-            </View>
-            <View style={styles.inlineModePills}>
-              {(
-                [
-                  { id: 'all', label: 'All hazards' },
-                  { id: 'pedestrian_night', label: 'Pedestrian night' },
-                  { id: 'driver_biker', label: 'Driver / Biker' },
-                ] as const
-              ).map((mode) => {
-                const active = viewMode === mode.id;
-                return (
-                  <TouchableOpacity
-                    key={mode.id}
-                    style={[
-                      styles.modeChip,
-                      {
-                        backgroundColor: theme.surfaceElevated,
-                        borderColor: theme.borderStrong,
-                      },
-                      active && {
-                        borderColor: theme.primary,
-                        backgroundColor: theme.primarySurface,
-                      },
-                    ]}
-                    onPress={() => setViewMode(mode.id)}
-                  >
-                    <Text
-                      style={[
-                        styles.modeChipText,
-                        { color: theme.textSecondary },
-                        active && { color: theme.primaryText },
-                      ]}
-                    >
-                      {mode.label}
-                    </Text>
-                  </TouchableOpacity>
-                );
-              })}
-            </View>
-          </View>
-        )}
       </View>
+
+      {/* Layer Status Toast */}
+      {layerToast && (
+        <View
+          style={[
+            styles.layerToastBadge,
+            {
+              top: topInset + 148,
+              backgroundColor: theme.surface,
+              borderColor: showDangerRings ? '#EF4444' : theme.border,
+            },
+          ]}
+        >
+          <Text style={[styles.layerToastText, { color: theme.text }]}>
+            {layerToast}
+          </Text>
+        </View>
+      )}
 
       {/* Right-Side Floating Map Controls (Zoom +, Zoom -, Layers, Locate) */}
       <View style={[styles.mapControls, { top: topInset + 148 }]}>
@@ -1643,25 +1901,19 @@ export default function MapScreen() {
               backgroundColor: theme.controlBg,
               borderColor: theme.controlBorder,
             },
-            (layersModalOpen || highContrastMap || viewMode !== 'all') && {
-              borderColor: theme.primary,
-              backgroundColor: theme.primarySurface,
+            showDangerRings && {
+              borderColor: '#EF4444',
+              backgroundColor: 'rgba(239, 68, 68, 0.2)',
             },
           ]}
-          onPress={() => {
-            setFilterSheetOpen(false);
-            setLayersModalOpen((v) => !v);
-          }}
+          onPress={handleToggleDangerRings}
+          onLongPress={() => setLayersModalOpen(true)}
           activeOpacity={0.8}
         >
           <Ionicons
             name="layers-outline"
             size={19}
-            color={
-              layersModalOpen || highContrastMap || viewMode !== 'all'
-                ? theme.primaryText
-                : theme.controlIcon
-            }
+            color={showDangerRings ? '#F87171' : theme.controlIcon}
           />
         </TouchableOpacity>
         <TouchableOpacity
@@ -1897,7 +2149,7 @@ export default function MapScreen() {
                 ]}
                 numberOfLines={1}
               >
-                {copy.city} · {tappedLocation.distanceText} ·{' '}
+                {t.cityBadge} · {tappedLocation.distanceText} ·{' '}
                 {tappedLocation.coordLabel}
               </Text>
             </View>
@@ -1941,15 +2193,17 @@ export default function MapScreen() {
                       { color: theme.verifiedText },
                     ]}
                   >
-                    🛡️ Safe Detour Active
+                    🛡️ {t.actions.safeDetourActive}
                   </Text>
                 </View>
                 <Text
                   style={[styles.safeRouteMetaText, { color: theme.text }]}
                   numberOfLines={1}
                 >
-                  {activeRoute.durationMin} min · {activeRoute.distanceKm} km ·
-                  Avoids active hazards
+                  {activeRoute.durationMin} min · {activeRoute.distanceKm} km ·{' '}
+                  {locale === 'bn'
+                    ? 'সক্রিয় ঝুঁকি এড়িয়ে'
+                    : 'Avoids active hazards'}
                 </Text>
               </View>
               <TouchableOpacity
@@ -1969,7 +2223,7 @@ export default function MapScreen() {
                     { color: theme.verifiedText },
                   ]}
                 >
-                  Clear Route
+                  {t.actions.clearRoute}
                 </Text>
               </TouchableOpacity>
             </View>
@@ -2013,7 +2267,11 @@ export default function MapScreen() {
                       },
                     ]}
                   >
-                    {activeRoute ? 'Recalculate' : 'Find Route'}
+                    {activeRoute
+                      ? locale === 'bn'
+                        ? 'পুনরায় হিসাব'
+                        : 'Recalculate'
+                      : t.actions.findRoute}
                   </Text>
                 </>
               )}
@@ -2032,7 +2290,9 @@ export default function MapScreen() {
               }}
               activeOpacity={0.85}
             >
-              <Text style={styles.tappedReportBtnText}>+ Report Here</Text>
+              <Text style={styles.tappedReportBtnText}>
+                {t.actions.reportHere}
+              </Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -2044,18 +2304,20 @@ export default function MapScreen() {
         const accent = isNighttime ? meta?.color : meta?.lightColor;
         const riskLabel =
           selectedHazard.severity === 'Critical'
-            ? 'High risk'
+            ? t.actions.highRisk
             : selectedHazard.severity === 'Medium'
-              ? 'Moderate risk'
-              : 'Low risk';
+              ? t.actions.mediumRisk
+              : t.actions.lowRisk;
         const confirmationsCount =
           selectedHazard.confirmations ??
           (selectedHazard.status === 'crowd_verified' ? 3 : 1);
+        const resolvedCount = selectedHazard.resolved_count ?? 0;
         const isCrowdVerified =
           selectedHazard.status === 'crowd_verified' ||
           confirmationsCount >= 3;
         const confirmationsText = `${confirmationsCount} ${confirmationsCount === 1 ? 'confirmation' : 'confirmations'}`;
         const isConfirming = confirmingId === selectedHazard.id;
+        const isResolving = resolvingId === selectedHazard.id;
 
         return (
           <View
@@ -2104,7 +2366,7 @@ export default function MapScreen() {
                         { color: theme.verifiedText },
                       ]}
                     >
-                      Crowd-Verified
+                      {t.actions.crowdVerified}
                     </Text>
                   </View>
                 )}
@@ -2151,7 +2413,7 @@ export default function MapScreen() {
               {selectedHazard.landmark_context || meta?.name}
             </Text>
             <Text style={[styles.selectedMeta, { color: theme.textSecondary }]}>
-              {copy.city} · Reported recently · {confirmationsText}
+              {t.cityBadge} · Reported recently · {confirmationsText}
             </Text>
 
             {activeRoute ? (
@@ -2172,15 +2434,17 @@ export default function MapScreen() {
                         { color: theme.verifiedText },
                       ]}
                     >
-                      🛡️ Safe Detour Active
+                      🛡️ {t.actions.safeDetourActive}
                     </Text>
                   </View>
                   <Text
                     style={[styles.safeRouteMetaText, { color: theme.text }]}
                     numberOfLines={1}
                   >
-                    {activeRoute.durationMin} min · {activeRoute.distanceKm} km ·
-                    Avoids active hazards
+                    {activeRoute.durationMin} min · {activeRoute.distanceKm} km ·{' '}
+                    {locale === 'bn'
+                      ? 'সক্রিয় ঝুঁকি এড়িয়ে'
+                      : 'Avoids active hazards'}
                   </Text>
                 </View>
                 <TouchableOpacity
@@ -2200,7 +2464,7 @@ export default function MapScreen() {
                       { color: theme.verifiedText },
                     ]}
                   >
-                    Clear Route
+                    {t.actions.clearRoute}
                   </Text>
                 </TouchableOpacity>
               </View>
@@ -2225,7 +2489,7 @@ export default function MapScreen() {
                     { color: theme.noticeText },
                   ]}
                 >
-                  Within 150m required to vote (180m away)
+                  Within 150m required to vote (180m {t.actions.away})
                 </Text>
               </View>
             )}
@@ -2263,8 +2527,9 @@ export default function MapScreen() {
                         styles.tappedRouteBtnText,
                         { color: theme.primary },
                       ]}
+                      numberOfLines={1}
                     >
-                      Find Route
+                      {t.actions.findRoute}
                     </Text>
                   </>
                 )}
@@ -2290,18 +2555,36 @@ export default function MapScreen() {
                       styles.confirmCardBtnText,
                       { color: theme.verifiedText },
                     ]}
+                    numberOfLines={1}
                   >
-                    {locale === 'bn' ? 'ভেরিফাই (+১)' : '👍 Confirm (+1)'}
+                    👍 {t.actions.confirmHazard} ({confirmationsCount})
                   </Text>
                 )}
               </TouchableOpacity>
 
               <TouchableOpacity
-                style={styles.viewDetailsBtn}
-                onPress={() => setDetailModalVisible(true)}
+                style={[
+                  styles.resolveCardBtn,
+                  {
+                    backgroundColor: theme.surfaceElevated,
+                    borderColor: theme.borderStrong,
+                  },
+                ]}
+                onPress={() => handleResolveHazard(selectedHazard)}
+                disabled={isResolving}
                 activeOpacity={0.85}
               >
-                <Text style={styles.viewDetailsBtnText}>View details</Text>
+                {isResolving ? (
+                  <ActivityIndicator size="small" color={theme.text} />
+                ) : (
+                  <Text
+                    style={[styles.resolveCardBtnText, { color: theme.text }]}
+                    numberOfLines={1}
+                  >
+                    ✅ {t.actions.markCleared}
+                    {resolvedCount > 0 ? ` (${resolvedCount})` : ''}
+                  </Text>
+                )}
               </TouchableOpacity>
             </View>
           </View>
@@ -2485,7 +2768,7 @@ export default function MapScreen() {
               },
             ]}
           >
-            {copy.mapTab}
+            {t.tabs.map}
           </Text>
         </TouchableOpacity>
 
@@ -2522,7 +2805,7 @@ export default function MapScreen() {
               },
             ]}
           >
-            {copy.alertsTab}
+            {t.tabs.alerts}
           </Text>
         </TouchableOpacity>
 
@@ -2558,10 +2841,19 @@ export default function MapScreen() {
               },
             ]}
           >
-            {copy.reportTab}
+            {t.tabs.report}
           </Text>
         </TouchableOpacity>
       </View>
+
+      <FilterModal
+        visible={filterModalOpen}
+        onClose={() => setFilterModalOpen(false)}
+        filters={hazardFilters}
+        onApply={(nextFilters) => setHazardFilters(nextFilters)}
+        isDark={isNighttime}
+        language={locale}
+      />
 
       <QuickReportModal
         visible={reportModalVisible}
@@ -3242,5 +3534,73 @@ const styles = StyleSheet.create({
   navLabel: {
     fontSize: 11,
     fontWeight: '500',
+  },
+  filterActiveDot: {
+    position: 'absolute',
+    top: 5,
+    right: 5,
+    width: 7,
+    height: 7,
+    borderRadius: 4,
+    backgroundColor: '#3B82F6',
+  },
+  searchDropdown: {
+    marginTop: 6,
+    borderRadius: 14,
+    borderWidth: 1,
+    overflow: 'hidden',
+    shadowColor: '#0F172A',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.25,
+    shadowRadius: 14,
+    elevation: 10,
+  },
+  searchSuggestionRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+  },
+  searchSuggestionTextWrap: {
+    flex: 1,
+    gap: 1,
+  },
+  searchSuggestionTitle: {
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  searchSuggestionSub: {
+    fontSize: 11,
+  },
+  layerToastBadge: {
+    position: 'absolute',
+    right: 60,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 12,
+    borderWidth: 1.5,
+    shadowColor: '#0F172A',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.22,
+    shadowRadius: 8,
+    elevation: 8,
+  },
+  layerToastText: {
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  resolveCardBtn: {
+    flex: 1,
+    height: 40,
+    borderRadius: 10,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 8,
+  },
+  resolveCardBtnText: {
+    fontSize: 12,
+    fontWeight: '700',
   },
 });
