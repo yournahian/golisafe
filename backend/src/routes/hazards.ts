@@ -360,8 +360,8 @@ const handleConfirmHazard = async (req: Request, res: Response) => {
         let existingRecord: any = null;
         let hasConfirmationsColumn = true;
 
-        // Try selecting with confirmations column
-        const fetchWithConfirmations = await supabase
+        // Try selecting with confirmations column (explicitly typed as any to prevent TS2322 on reassignment)
+        let fetchWithConfirmations: any = await supabase
           .from('hazards')
           .select(
             'id, category, severity, latitude, longitude, landmark_context, sub_tag, status, created_at, confirmations, resolved_count'
@@ -373,7 +373,7 @@ const handleConfirmHazard = async (req: Request, res: Response) => {
           if (isMissingColumnError(fetchWithConfirmations.error)) {
             hasConfirmationsColumn = false;
             // Retry select without confirmations/resolved_count columns
-            const fetchWithoutConfirmations = await supabase
+            const fetchWithoutConfirmations: any = await supabase
               .from('hazards')
               .select(
                 'id, category, severity, latitude, longitude, landmark_context, sub_tag, status, created_at'
@@ -428,7 +428,7 @@ const handleConfirmHazard = async (req: Request, res: Response) => {
             updatePayload.status = 'crowd_verified';
           }
 
-          const updateResult = await supabase
+          const updateResult: any = await supabase
             .from('hazards')
             .update(updatePayload)
             .eq('id', hazardId)
@@ -446,7 +446,7 @@ const handleConfirmHazard = async (req: Request, res: Response) => {
               }
 
               if (Object.keys(fallbackPayload).length > 0) {
-                const fallbackUpdate = await supabase
+                const fallbackUpdate: any = await supabase
                   .from('hazards')
                   .update(fallbackPayload)
                   .eq('id', hazardId)
@@ -489,7 +489,7 @@ const handleConfirmHazard = async (req: Request, res: Response) => {
           }
 
           if (Object.keys(fallbackPayload).length > 0) {
-            const fallbackUpdate = await supabase
+            const fallbackUpdate: any = await supabase
               .from('hazards')
               .update(fallbackPayload)
               .eq('id', hazardId)
@@ -562,8 +562,8 @@ const handleResolveHazard = async (req: Request, res: Response) => {
         let existingRecord: any = null;
         let hasResolvedCountColumn = true;
 
-        // Try selecting with resolved_count column
-        let fetchResult = await supabase
+        // Try selecting with resolved_count column (explicitly typed as any to prevent TS2322 on reassignment)
+        let fetchResult: any = await supabase
           .from('hazards')
           .select(
             'id, category, severity, latitude, longitude, landmark_context, sub_tag, status, created_at, confirmations, resolved_count'
@@ -629,7 +629,7 @@ const handleResolveHazard = async (req: Request, res: Response) => {
             updatePayload.status = 'resolved';
           }
 
-          let updateResult = await supabase
+          let updateResult: any = await supabase
             .from('hazards')
             .update(updatePayload)
             .eq('id', hazardId)
@@ -646,7 +646,7 @@ const handleResolveHazard = async (req: Request, res: Response) => {
             }
 
             if (Object.keys(fallbackPayload).length > 0) {
-              const fallbackUpdate = await supabase
+              const fallbackUpdate: any = await supabase
                 .from('hazards')
                 .update(fallbackPayload)
                 .eq('id', hazardId)
@@ -700,7 +700,7 @@ const handleResolveHazard = async (req: Request, res: Response) => {
           }
 
           if (Object.keys(fallbackPayload).length > 0) {
-            const fallbackUpdate = await supabase
+            const fallbackUpdate: any = await supabase
               .from('hazards')
               .update(fallbackPayload)
               .eq('id', hazardId)
@@ -780,7 +780,7 @@ router.get('/', async (req: Request, res: Response) => {
   try {
     const supabase = getSupabaseClient();
     if (supabase) {
-      let query = supabase
+      let query: any = supabase
         .from('hazards')
         .select(
           'id, category, severity, latitude, longitude, landmark_context, sub_tag, status, created_at, confirmations, resolved_count'
@@ -798,11 +798,13 @@ router.get('/', async (req: Request, res: Response) => {
 
       query = query.order('created_at', { ascending: false });
 
-      let { data, error } = await query;
+      let queryResult: any = await query;
+      let data = queryResult.data;
+      let error = queryResult.error;
 
       if (error && isMissingColumnError(error)) {
-        // Fallback retry without missing schema columns
-        let fallbackQuery = supabase
+        // Fallback retry without missing schema columns (explicitly typed as any to prevent TS2322 on reassignment)
+        let fallbackQuery: any = supabase
           .from('hazards')
           .select(
             'id, category, severity, latitude, longitude, landmark_context, sub_tag, status, created_at, confirmations'
@@ -819,10 +821,10 @@ router.get('/', async (req: Request, res: Response) => {
         }
 
         fallbackQuery = fallbackQuery.order('created_at', { ascending: false });
-        let fallbackResult = await fallbackQuery;
+        let fallbackResult: any = await fallbackQuery;
 
         if (fallbackResult.error && isMissingColumnError(fallbackResult.error)) {
-          let baseQuery = supabase
+          let baseQuery: any = supabase
             .from('hazards')
             .select(
               'id, category, severity, latitude, longitude, landmark_context, sub_tag, status, created_at'
@@ -953,7 +955,7 @@ router.post('/', async (req: Request, res: Response) => {
         resolved_count: 0,
       };
 
-      let { data, error } = await supabase
+      let insertResult: any = await supabase
         .from('hazards')
         .insert(insertRecord)
         .select(
@@ -961,9 +963,12 @@ router.post('/', async (req: Request, res: Response) => {
         )
         .single();
 
+      let data = insertResult.data;
+      let error = insertResult.error;
+
       if (error && isMissingColumnError(error)) {
         delete insertRecord.resolved_count;
-        let retry = await supabase
+        let retry: any = await supabase
           .from('hazards')
           .insert(insertRecord)
           .select(
