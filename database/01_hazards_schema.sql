@@ -41,3 +41,7 @@ CREATE INDEX IF NOT EXISTS idx_hazards_location ON hazards USING GIST (location)
 -- Lifecycle & TTL migration helpers
 ALTER TABLE hazards ADD COLUMN IF NOT EXISTS resolved_count INT DEFAULT 0;
 ALTER TABLE hazards ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ DEFAULT (NOW() + INTERVAL '12 hours');
+
+-- Auth & Storage migration helpers
+ALTER TABLE hazards ADD COLUMN IF NOT EXISTS image_url TEXT;
+ALTER TABLE hazards ADD COLUMN IF NOT EXISTS reported_by UUID;
