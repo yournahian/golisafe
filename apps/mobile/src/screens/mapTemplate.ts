@@ -290,6 +290,85 @@ export const LEAFLET_HTML = `<!DOCTYPE html>
       } catch (e) {}
     };
 
+    window.renderRouteOptions = function(routes, selectedId, shouldFitBounds) {
+      routeLayer.clearLayers();
+      if (!Array.isArray(routes) || routes.length === 0) return;
+
+      const allLatLngs = [];
+
+      // First pass: draw unselected alternative routes underneath
+      routes.forEach(function(route) {
+        if (!Array.isArray(route.coordinates) || route.coordinates.length < 2) return;
+        route.coordinates.forEach(function(pt) {
+          allLatLngs.push(pt);
+        });
+        if (route.id === selectedId) return;
+
+        const isSafest = route.id === 'safest' || route.label === 'Safest Route';
+        const altColor = isSafest
+          ? '#10B981'
+          : (route.riskScore > 0 ? '#F59E0B' : '#3B82F6');
+
+        L.polyline(route.coordinates, {
+          color: altColor,
+          weight: 4,
+          opacity: 0.45,
+          dashArray: '8 6',
+          lineCap: 'round',
+          lineJoin: 'round'
+        }).addTo(routeLayer);
+      });
+
+      // Second pass: draw active selected route on top with glow
+      const selectedRoute =
+        routes.find(function(r) { return r.id === selectedId; }) || routes[0];
+
+      if (selectedRoute && Array.isArray(selectedRoute.coordinates) && selectedRoute.coordinates.length >= 2) {
+        const isSafest =
+          selectedRoute.id === 'safest' || selectedRoute.label === 'Safest Route';
+        const mainColor = isSafest
+          ? '#10B981'
+          : (selectedRoute.riskScore > 0 ? '#F59E0B' : '#3B82F6');
+        const glowColor = isSafest
+          ? '#34D399'
+          : (selectedRoute.riskScore > 0 ? '#FBBF24' : '#60A5FA');
+
+        L.polyline(selectedRoute.coordinates, {
+          color: glowColor,
+          weight: 12,
+          opacity: 0.28,
+          lineCap: 'round',
+          lineJoin: 'round'
+        }).addTo(routeLayer);
+
+        L.polyline(selectedRoute.coordinates, {
+          color: mainColor,
+          weight: 6,
+          opacity: 0.96,
+          lineCap: 'round',
+          lineJoin: 'round'
+        }).addTo(routeLayer);
+      }
+
+      if (shouldFitBounds && allLatLngs.length >= 2) {
+        try {
+          const bounds = L.latLngBounds(allLatLngs);
+          map.fitBounds(bounds, {
+            paddingTopLeft: [48, 185],
+            paddingBottomRight: [48, 275],
+            maxZoom: 16,
+            animate: true
+          });
+        } catch (e) {}
+      }
+    };
+
+    window.updateUserLocation = function(lat, lng) {
+      if (typeof lat === 'number' && typeof lng === 'number') {
+        userMarker.setLatLng([lat, lng]);
+      }
+    };
+
     window.setMapTheme = function(isNight, isHighContrast) {
       document.body.classList.toggle('night-mode', !!isNight);
       document.body.classList.toggle('light-mode', !isNight);

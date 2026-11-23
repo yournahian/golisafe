@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ActivityIndicator,
   Alert,
+  Image,
   Modal,
   Platform,
   ScrollView,
@@ -11,27 +12,33 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
+import * as Location from 'expo-location';
+import * as Notifications from 'expo-notifications';
 import Svg, { Circle, Ellipse, Path } from 'react-native-svg';
 import { WebView, type WebViewMessageEvent } from 'react-native-webview';
 import type {
-  CreateHazardRequest,
   HazardCategory,
   HazardRecord,
+  SafeRouteOption,
 } from '../../../../packages/shared/api-contract';
 import AlertsModal from '../components/Alerts/AlertsModal';
+import AuthModal, { type AuthUser } from '../components/Auth/AuthModal';
 import {
   DEFAULT_HAZARD_FILTERS,
   FilterModal,
   type HazardFilterState,
 } from '../components/Filter/FilterModal';
-import QuickReportModal from '../components/Report/QuickReportModal';
+import ProfileModal from '../components/Profile/ProfileModal';
+import QuickReportModal, {
+  type QuickReportHazardPayload,
+} from '../components/Report/QuickReportModal';
 import { TRANSLATIONS, type Language } from '../i18n/translations';
 import {
   confirmHazard,
+  createHazard,
   fetchHazards,
+  fetchSafeRoutes,
   resolveHazard,
-  submitHazard,
 } from '../services/api';
 import {
   CATEGORY_META,
@@ -44,20 +51,247 @@ import {
   UI_COPY,
 } from './mapConstants';
 import {
-  buildCurvedDetourPolyline,
   computeDistanceMeters,
-  computePolylineDistanceMeters,
   findNearbyCorridorHazards,
   resolveDhakaTappedLocation,
-  type SafeRouteState,
   type TappedLocationState,
 } from './mapGeoUtils';
 import { styles } from './MapScreen.styles';
 import { LEAFLET_HTML } from './mapTemplate';
 
+try {
+  Notifications.setNotificationHandler({
+    handleNotification: async () => ({
+      shouldShowAlert: true,
+      shouldPlaySound: true,
+      shouldSetBadge: false,
+    }),
+  });
+} catch {
+  // Notification handler optional on unsupported runtimes
+}
+
 type ViewMode = 'all' | 'pedestrian_night' | 'driver_biker';
 type CategoryFilter = 'all' | HazardCategory;
 type BottomTab = 'map' | 'alerts' | 'report';
+
+interface ProximityAlertState {
+  hazard: HazardRecord;
+  distanceMeters: number;
+}
+
+type MapUiIconName =
+  | 'user'
+  | 'shield-user'
+  | 'search'
+  | 'options'
+  | 'warning'
+  | 'location'
+  | 'add'
+  | 'remove'
+  | 'layers'
+  | 'locate'
+  | 'git-branch'
+  | 'map'
+  | 'notifications';
+
+function MapUiIcon({
+  name,
+  size = 18,
+  color = '#F8FAFC',
+}: {
+  name: MapUiIconName;
+  size?: number;
+  color?: string;
+}) {
+  switch (name) {
+    case 'user':
+      return (
+        <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+          <Circle cx={12} cy={8} r={3.6} stroke={color} strokeWidth={2} />
+          <Path
+            d="M5 20a7 7 0 0 1 14 0"
+            stroke={color}
+            strokeWidth={2}
+            strokeLinecap="round"
+          />
+        </Svg>
+      );
+    case 'shield-user':
+      return (
+        <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+          <Path
+            d="M12 2.5 4.5 5.5v5.8c0 5 3.2 9.5 7.5 10.5 4.3-1 7.5-5.5 7.5-10.5V5.5L12 2.5Z"
+            stroke={color}
+            strokeWidth={1.9}
+            strokeLinejoin="round"
+          />
+          <Path
+            d="m9 12 2 2 4-4"
+            stroke={color}
+            strokeWidth={2}
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+        </Svg>
+      );
+    case 'search':
+      return (
+        <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+          <Circle cx={11} cy={11} r={7} stroke={color} strokeWidth={2} />
+          <Path
+            d="m16.5 16.5 4.5 4.5"
+            stroke={color}
+            strokeWidth={2}
+            strokeLinecap="round"
+          />
+        </Svg>
+      );
+    case 'options':
+      return (
+        <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+          <Path
+            d="M4 6h16M4 12h16M4 18h16"
+            stroke={color}
+            strokeWidth={2}
+            strokeLinecap="round"
+          />
+          <Circle cx={9} cy={6} r={2} fill={color} />
+          <Circle cx={15} cy={12} r={2} fill={color} />
+          <Circle cx={9} cy={18} r={2} fill={color} />
+        </Svg>
+      );
+    case 'warning':
+      return (
+        <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+          <Path
+            d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"
+            stroke={color}
+            strokeWidth={1.9}
+            strokeLinejoin="round"
+          />
+          <Path
+            d="M12 9v4.2M12 16.8h.01"
+            stroke={color}
+            strokeWidth={2}
+            strokeLinecap="round"
+          />
+        </Svg>
+      );
+    case 'location':
+      return (
+        <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+          <Path
+            d="M12 2.5c-3.9 0-7 3.1-7 7 0 5.2 7 12 7 12s7-6.8 7-12c0-3.9-3.1-7-7-7Z"
+            stroke={color}
+            strokeWidth={1.9}
+          />
+          <Circle cx={12} cy={9.5} r={2.4} stroke={color} strokeWidth={1.9} />
+        </Svg>
+      );
+    case 'add':
+      return (
+        <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+          <Path
+            d="M12 5v14M5 12h14"
+            stroke={color}
+            strokeWidth={2.4}
+            strokeLinecap="round"
+          />
+        </Svg>
+      );
+    case 'remove':
+      return (
+        <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+          <Path
+            d="M5 12h14"
+            stroke={color}
+            strokeWidth={2.4}
+            strokeLinecap="round"
+          />
+        </Svg>
+      );
+    case 'layers':
+      return (
+        <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+          <Path
+            d="M12 3 2.5 7.8 12 12.6l9.5-4.8L12 3Z"
+            stroke={color}
+            strokeWidth={1.8}
+            strokeLinejoin="round"
+          />
+          <Path
+            d="m2.5 12.6 9.5 4.8 9.5-4.8M2.5 17.2 12 22l9.5-4.8"
+            stroke={color}
+            strokeWidth={1.8}
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+        </Svg>
+      );
+    case 'locate':
+      return (
+        <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+          <Circle cx={12} cy={12} r={5} stroke={color} strokeWidth={2} />
+          <Path
+            d="M12 2v3M12 19v3M2 12h3M19 12h3"
+            stroke={color}
+            strokeWidth={2}
+            strokeLinecap="round"
+          />
+        </Svg>
+      );
+    case 'git-branch':
+      return (
+        <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+          <Circle cx={6} cy={6} r={2.2} stroke={color} strokeWidth={1.9} />
+          <Circle cx={6} cy={18} r={2.2} stroke={color} strokeWidth={1.9} />
+          <Circle cx={18} cy={8.5} r={2.2} stroke={color} strokeWidth={1.9} />
+          <Path
+            d="M6 8.2v7.6M6 8.5c0 3 3 4.5 6 4.5h3.8"
+            stroke={color}
+            strokeWidth={1.9}
+            strokeLinecap="round"
+          />
+        </Svg>
+      );
+    case 'map':
+      return (
+        <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+          <Path
+            d="M9 4 3 6.8v13.2L9 17.2l6 2.8 6-2.8V4l-6 2.8L9 4Z"
+            stroke={color}
+            strokeWidth={1.8}
+            strokeLinejoin="round"
+          />
+          <Path
+            d="M9 4v13.2M15 6.8V20"
+            stroke={color}
+            strokeWidth={1.8}
+            strokeLinecap="round"
+          />
+        </Svg>
+      );
+    case 'notifications':
+      return (
+        <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+          <Path
+            d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"
+            stroke={color}
+            strokeWidth={1.8}
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+          <Path
+            d="M13.7 21a2 2 0 0 1-3.4 0"
+            stroke={color}
+            strokeWidth={1.8}
+            strokeLinecap="round"
+          />
+        </Svg>
+      );
+  }
+}
 
 function HazardCategoryIcon({
   category,
@@ -142,18 +376,44 @@ export default function MapScreen() {
   const [reportModalVisible, setReportModalVisible] = useState<boolean>(false);
   const [tappedLocation, setTappedLocation] =
     useState<TappedLocationState | null>(null);
-  const [activeRoute, setActiveRoute] = useState<SafeRouteState | null>(null);
+
+  // Auth & Citizen Reputation State
+  const [currentUser, setCurrentUser] = useState<AuthUser | null>(null);
+  const [authModalOpen, setAuthModalOpen] = useState<boolean>(false);
+  const [profileModalOpen, setProfileModalOpen] = useState<boolean>(false);
+  const [userReportsCount, setUserReportsCount] = useState<number>(0);
+
+  // Multi-Route Risk Scoring & Live Toggle State
+  const [routeOptions, setRouteOptions] = useState<SafeRouteOption[]>([]);
+  const [selectedRouteId, setSelectedRouteId] = useState<string>('safest');
+  const [routeTargetLabel, setRouteTargetLabel] = useState<string>('');
+  const [corridorHazardCount, setCorridorHazardCount] = useState<number>(0);
   const [routeLoading, setRouteLoading] = useState<boolean>(false);
+
+  // Proximity Geofencing & Live Location State
+  const [userLocation, setUserLocation] = useState(DHAKA_CENTER);
+  const [proximityAlert, setProximityAlert] =
+    useState<ProximityAlertState | null>(null);
+  const [failedThumbIds, setFailedThumbIds] = useState<Record<string, boolean>>(
+    {},
+  );
+
   const [confirmingId, setConfirmingId] = useState<string | null>(null);
   const [resolvingId, setResolvingId] = useState<string | null>(null);
   const [mapCenter, setMapCenter] = useState(DHAKA_CENTER);
   const [webViewReady, setWebViewReady] = useState<boolean>(false);
   const webViewRef = useRef<WebView>(null);
   const layerToastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastNotifiedHazardRef = useRef<string | null>(null);
 
   const theme = isNighttime ? DARK_THEME : LIGHT_THEME;
   const copy = UI_COPY[locale];
   const t = TRANSLATIONS[locale];
+
+  const isUserTrusted = Boolean(
+    currentUser && (currentUser.is_trusted || currentUser.trust_score >= 50),
+  );
+  const userTrustWeight = isUserTrusted ? 2 : 1;
 
   const loadHazards = useCallback(async () => {
     try {
@@ -179,8 +439,197 @@ export default function MapScreen() {
     loadHazards();
   }, [loadHazards]);
 
+  // Configure Android local notification channel
+  useEffect(() => {
+    if (Platform.OS === 'android') {
+      Notifications.setNotificationChannelAsync('hazard-proximity', {
+        name: 'Proximity Hazard Alerts',
+        importance: Notifications.AndroidImportance.HIGH,
+        vibrationPattern: [0, 250, 150, 250],
+        lightColor: '#EF4444',
+      }).catch(() => {});
+    }
+  }, []);
+
+  const sendProximityLocalNotification = useCallback(
+    async (hazard: HazardRecord, distanceMeters: number) => {
+      try {
+        const perm = await Notifications.getPermissionsAsync();
+        let granted = perm.granted;
+        if (!granted) {
+          const req = await Notifications.requestPermissionsAsync();
+          granted = req.granted;
+        }
+        if (!granted) return;
+
+        const meta = CATEGORY_META[hazard.category];
+        const place = hazard.landmark_context || meta?.name || 'Dhaka street';
+        await Notifications.scheduleNotificationAsync({
+          content: {
+            title:
+              locale === 'bn'
+                ? `⚠️ সামনেই উচ্চ ঝুঁকি (${distanceMeters} মিটার)!`
+                : `⚠️ High-Risk Hazard ${distanceMeters}m ahead!`,
+            body: `${meta?.name || hazard.category} · ${place}`,
+            sound: true,
+          },
+          trigger: null,
+        });
+      } catch {
+        // Ignore notification runtime restrictions; in-app banner still displays
+      }
+    },
+    [locale],
+  );
+
+  const evaluateProximityGeofence = useCallback(
+    (
+      lat: number,
+      lng: number,
+      hazardList: HazardRecord[],
+      forceNotify = false,
+    ): ProximityAlertState | null => {
+      const highRiskActive = hazardList.filter(
+        (h) =>
+          h.status !== 'resolved' &&
+          h.status !== 'expired' &&
+          (h.severity === 'Critical' || (h.severity as string) === 'High'),
+      );
+
+      let nearest: HazardRecord | null = null;
+      let minDist = Number.POSITIVE_INFINITY;
+
+      for (const h of highRiskActive) {
+        const d = computeDistanceMeters(lat, lng, h.latitude, h.longitude);
+        if (d < minDist) {
+          minDist = d;
+          nearest = h;
+        }
+      }
+
+      if (nearest && minDist <= 250) {
+        const distRounded = Math.max(15, minDist);
+        const alertObj: ProximityAlertState = {
+          hazard: nearest,
+          distanceMeters: distRounded,
+        };
+        setProximityAlert(alertObj);
+
+        if (forceNotify || lastNotifiedHazardRef.current !== nearest.id) {
+          lastNotifiedHazardRef.current = nearest.id;
+          sendProximityLocalNotification(nearest, distRounded);
+        }
+        return alertObj;
+      }
+
+      return null;
+    },
+    [sendProximityLocalNotification],
+  );
+
+  // Watch live GPS foreground updates for automatic 250m proximity geofencing
+  useEffect(() => {
+    let sub: Location.LocationSubscription | null = null;
+    let mounted = true;
+
+    (async () => {
+      try {
+        const perm = await Location.requestForegroundPermissionsAsync();
+        if (!perm.granted || !mounted) return;
+
+        sub = await Location.watchPositionAsync(
+          {
+            accuracy: Location.Accuracy.Balanced,
+            distanceInterval: 25,
+            timeInterval: 10000,
+          },
+          (loc) => {
+            if (!mounted) return;
+            const nextCoords = {
+              latitude: loc.coords.latitude,
+              longitude: loc.coords.longitude,
+            };
+            setUserLocation(nextCoords);
+            webViewRef.current?.injectJavaScript(
+              `window.updateUserLocation && window.updateUserLocation(${nextCoords.latitude}, ${nextCoords.longitude}); true;`,
+            );
+          },
+        );
+      } catch {
+        // Fallback to DHAKA_CENTER if location services unavailable
+      }
+    })();
+
+    return () => {
+      mounted = false;
+      sub?.remove();
+    };
+  }, []);
+
+  // Re-evaluate proximity whenever userLocation or active hazards change
+  useEffect(() => {
+    evaluateProximityGeofence(
+      userLocation.latitude,
+      userLocation.longitude,
+      hazards,
+      false,
+    );
+  }, [userLocation, hazards, evaluateProximityGeofence]);
+
+  const handleTriggerProximityCheck = useCallback(() => {
+    const directHit = evaluateProximityGeofence(
+      userLocation.latitude,
+      userLocation.longitude,
+      hazards,
+      true,
+    );
+    if (directHit) {
+      webViewRef.current?.injectJavaScript(
+        `window.focusHazard && window.focusHazard(${directHit.hazard.latitude}, ${directHit.hazard.longitude}); true;`,
+      );
+      return;
+    }
+
+    // For live classroom/demo presentation when GPS is >250m from High/Critical pins:
+    // simulate user position ~180m ahead of the nearest active High/Critical hazard
+    const highRiskActive = hazards.filter(
+      (h) =>
+        h.status !== 'resolved' &&
+        h.status !== 'expired' &&
+        (h.severity === 'Critical' || (h.severity as string) === 'High'),
+    );
+    if (highRiskActive.length === 0) return;
+
+    const target = [...highRiskActive].sort(
+      (a, b) =>
+        computeDistanceMeters(
+          mapCenter.latitude,
+          mapCenter.longitude,
+          a.latitude,
+          a.longitude,
+        ) -
+        computeDistanceMeters(
+          mapCenter.latitude,
+          mapCenter.longitude,
+          b.latitude,
+          b.longitude,
+        ),
+    )[0];
+
+    // ~0.00162 degrees latitude is ~180 meters Haversine
+    const simLat = Number((target.latitude - 0.00162).toFixed(6));
+    const simLng = target.longitude;
+    setUserLocation({ latitude: simLat, longitude: simLng });
+    webViewRef.current?.injectJavaScript(
+      `window.updateUserLocation && window.updateUserLocation(${simLat}, ${simLng}); window.focusHazard && window.focusHazard(${target.latitude}, ${target.longitude}); true;`,
+    );
+    evaluateProximityGeofence(simLat, simLng, hazards, true);
+  }, [userLocation, mapCenter, hazards, evaluateProximityGeofence]);
+
   const clearSafeRoute = useCallback(() => {
-    setActiveRoute(null);
+    setRouteOptions([]);
+    setRouteTargetLabel('');
+    setCorridorHazardCount(0);
     webViewRef.current?.injectJavaScript(
       'window.clearSafeRoute && window.clearSafeRoute(); true;',
     );
@@ -194,85 +643,120 @@ export default function MapScreen() {
     );
   }, [clearSafeRoute]);
 
+  const syncRoutesToWebView = useCallback(
+    (
+      options: SafeRouteOption[],
+      activeId: string,
+      shouldFitBounds: boolean,
+    ) => {
+      if (!webViewRef.current) return;
+      if (options.length === 0) {
+        webViewRef.current.injectJavaScript(
+          'window.clearSafeRoute && window.clearSafeRoute(); true;',
+        );
+        return;
+      }
+      const payload = JSON.stringify(options);
+      const idJson = JSON.stringify(activeId);
+      webViewRef.current.injectJavaScript(
+        `window.renderRouteOptions && window.renderRouteOptions(${payload}, ${idJson}, ${shouldFitBounds}); true;`,
+      );
+    },
+    [],
+  );
+
+  const handleSelectRouteOption = useCallback(
+    (optionId: string) => {
+      setSelectedRouteId(optionId);
+      syncRoutesToWebView(routeOptions, optionId, false);
+    },
+    [routeOptions, syncRoutesToWebView],
+  );
+
   const handleFindSafeRoute = useCallback(
     async (destLat: number, destLng: number, targetLabel: string) => {
       setRouteLoading(true);
-      const userLat = DHAKA_CENTER.latitude;
-      const userLng = DHAKA_CENTER.longitude;
-      const corridorHazards = findNearbyCorridorHazards(
-        userLat,
-        userLng,
+      const startLat = userLocation.latitude;
+      const startLng = userLocation.longitude;
+
+      const corridor = findNearbyCorridorHazards(
+        startLat,
+        startLng,
         destLat,
         destLng,
         hazards,
       );
-      const avoidedCount = Math.max(1, corridorHazards.length);
-
-      let routeCoords: Array<[number, number]> | null = null;
-      let distanceMeters = 0;
-      let durationSeconds = 0;
 
       try {
-        const osrmUrl = `https://router.project-osrm.org/route/v1/foot/${userLng},${userLat};${destLng},${destLat}?overview=full&geometries=geojson`;
-        const response = await fetch(osrmUrl);
-        if (response.ok) {
-          const json = await response.json();
-          const route = json?.routes?.[0];
-          const rawCoords: Array<[number, number]> | undefined =
-            route?.geometry?.coordinates;
-          if (Array.isArray(rawCoords) && rawCoords.length >= 2) {
-            routeCoords = rawCoords.map(([lng, lat]) => [lat, lng]);
-            distanceMeters =
-              typeof route.distance === 'number'
-                ? route.distance
-                : computePolylineDistanceMeters(routeCoords);
-            durationSeconds =
-              typeof route.duration === 'number'
-                ? route.duration
-                : Math.round(distanceMeters / 1.3);
-          }
-        }
-      } catch {
-        // Fall back to curved street detour polyline below
-      }
-
-      if (!routeCoords || routeCoords.length < 2) {
-        routeCoords = buildCurvedDetourPolyline(
-          userLat,
-          userLng,
+        const fetchedOptions = await fetchSafeRoutes(
+          startLat,
+          startLng,
           destLat,
           destLng,
-          corridorHazards,
+          hazards,
         );
-        distanceMeters = computePolylineDistanceMeters(routeCoords);
-        durationSeconds = Math.round(distanceMeters / 1.3);
+
+        const defaultId =
+          fetchedOptions.find((o) => o.id === 'safest')?.id ||
+          fetchedOptions[0]?.id ||
+          'safest';
+
+        setCorridorHazardCount(corridor.length);
+        setRouteTargetLabel(targetLabel);
+        setRouteOptions(fetchedOptions);
+        setSelectedRouteId(defaultId);
+        setSelectedHazardId(null);
+
+        syncRoutesToWebView(fetchedOptions, defaultId, true);
+      } finally {
+        setRouteLoading(false);
       }
-
-      const distanceKm = (Math.max(150, distanceMeters) / 1000).toFixed(1);
-      const durationMin = Math.max(2, Math.round(durationSeconds / 60));
-
-      setActiveRoute({
-        targetLabel,
-        durationMin,
-        distanceKm,
-        avoidedCount,
-        coords: routeCoords,
-      });
-
-      const payload = JSON.stringify(routeCoords);
-      webViewRef.current?.injectJavaScript(
-        `window.renderSafeRoute && window.renderSafeRoute(${payload}); true;`,
-      );
-      setRouteLoading(false);
     },
-    [hazards],
+    [userLocation, hazards, syncRoutesToWebView],
   );
 
+  const handleAuthSuccess = useCallback((user: AuthUser) => {
+    if (user.id.startsWith('guest_')) {
+      setCurrentUser(null);
+      return;
+    }
+    const lowerEmail = user.email.toLowerCase();
+    const autoGuardian =
+      lowerEmail.includes('guardian') ||
+      lowerEmail.includes('trusted') ||
+      lowerEmail.includes('admin');
+    const initialScore = autoGuardian
+      ? Math.max(user.trust_score, 68)
+      : user.trust_score;
+    setCurrentUser({
+      ...user,
+      trust_score: initialScore,
+      is_trusted: autoGuardian || user.is_trusted || initialScore >= 50,
+    });
+  }, []);
+
   const handleSubmitHazard = useCallback(
-    async (payload: CreateHazardRequest) => {
+    async (payload: QuickReportHazardPayload) => {
+      const reporterId = currentUser?.id ?? undefined;
+      const attachedImage = payload.imageUri ?? undefined;
+
       let createdRecord: HazardRecord;
       try {
-        createdRecord = await submitHazard(payload);
+        createdRecord = await createHazard({
+          category: payload.category,
+          severity: payload.severity,
+          latitude: payload.latitude,
+          longitude: payload.longitude,
+          landmark_context: payload.landmark_context,
+          sub_tag: payload.sub_tag,
+          image_url: attachedImage,
+          reported_by: reporterId,
+        });
+        createdRecord = {
+          ...createdRecord,
+          image_url: createdRecord.image_url ?? attachedImage ?? null,
+          reported_by: createdRecord.reported_by ?? reporterId ?? null,
+        };
       } catch {
         createdRecord = {
           id: `local-${Date.now()}`,
@@ -282,97 +766,140 @@ export default function MapScreen() {
           longitude: payload.longitude,
           landmark_context: payload.landmark_context,
           sub_tag: payload.sub_tag,
+          image_url: attachedImage ?? null,
+          reported_by: reporterId ?? null,
+          confirmations: userTrustWeight,
           status: 'active',
           created_at: new Date().toISOString(),
         };
       }
 
+      if (currentUser) {
+        setUserReportsCount((c) => c + 1);
+        setCurrentUser((prev) => {
+          if (!prev) return prev;
+          const nextScore = Math.min(100, prev.trust_score + 10);
+          return {
+            ...prev,
+            trust_score: nextScore,
+            is_trusted: prev.is_trusted || nextScore >= 50,
+          };
+        });
+      }
+
       setHazards((prev) => [createdRecord, ...prev]);
-      setSelectedHazardId(createdRecord.id);
       clearTappedPinOnMap();
+      setSelectedHazardId(createdRecord.id);
       setReportModalVisible(false);
       Alert.alert(
-        'Hazard Reported',
-        'Thank you! Your hazard report is now visible on the Dhaka safety map.',
+        locale === 'bn' ? 'রিপোর্ট জমা হয়েছে' : 'Hazard Reported',
+        locale === 'bn'
+          ? 'ধন্যবাদ! আপনার ঝুঁকির রিপোর্ট ম্যাপে যুক্ত হয়েছে।'
+          : 'Thank you! Your hazard report is now visible on the Dhaka safety map.',
       );
     },
-    [clearTappedPinOnMap],
+    [currentUser, userTrustWeight, clearTappedPinOnMap, locale],
   );
 
-  const handleConfirmHazard = useCallback(async (hazard: HazardRecord) => {
-    setConfirmingId(hazard.id);
-    const currentCount =
-      hazard.confirmations ?? (hazard.status === 'crowd_verified' ? 3 : 1);
-    try {
-      const updated = await confirmHazard(hazard.id);
-      const nextCount = updated.confirmations ?? currentCount + 1;
-      const nextStatus =
-        nextCount >= 3 ? 'crowd_verified' : (updated.status ?? hazard.status);
-      setHazards((prev) =>
-        prev.map((h) =>
-          h.id === hazard.id
-            ? { ...h, ...updated, confirmations: nextCount, status: nextStatus }
-            : h,
-        ),
-      );
-    } catch {
-      const nextCount = currentCount + 1;
-      const nextStatus =
-        nextCount >= 3 ? 'crowd_verified' : hazard.status;
-      setHazards((prev) =>
-        prev.map((h) =>
-          h.id === hazard.id
-            ? { ...h, confirmations: nextCount, status: nextStatus }
-            : h,
-        ),
-      );
-    } finally {
-      setConfirmingId(null);
-    }
-  }, []);
+  const handleConfirmHazard = useCallback(
+    async (hazard: HazardRecord) => {
+      setConfirmingId(hazard.id);
+      const currentCount =
+        hazard.confirmations ?? (hazard.status === 'crowd_verified' ? 3 : 1);
+      try {
+        const updated = await confirmHazard(hazard.id, userTrustWeight);
+        const nextCount =
+          updated.confirmations ?? currentCount + userTrustWeight;
+        const nextStatus =
+          nextCount >= 3 ? 'crowd_verified' : (updated.status ?? hazard.status);
+        setHazards((prev) =>
+          prev.map((h) =>
+            h.id === hazard.id
+              ? {
+                  ...h,
+                  ...updated,
+                  image_url: updated.image_url ?? h.image_url,
+                  confirmations: nextCount,
+                  status: nextStatus,
+                }
+              : h,
+          ),
+        );
+      } catch {
+        const nextCount = currentCount + userTrustWeight;
+        const nextStatus = nextCount >= 3 ? 'crowd_verified' : hazard.status;
+        setHazards((prev) =>
+          prev.map((h) =>
+            h.id === hazard.id
+              ? { ...h, confirmations: nextCount, status: nextStatus }
+              : h,
+          ),
+        );
+      } finally {
+        if (currentUser) {
+          setCurrentUser((prev) => {
+            if (!prev) return prev;
+            const nextScore = Math.min(100, prev.trust_score + 4);
+            return {
+              ...prev,
+              trust_score: nextScore,
+              is_trusted: prev.is_trusted || nextScore >= 50,
+            };
+          });
+        }
+        setConfirmingId(null);
+      }
+    },
+    [userTrustWeight, currentUser],
+  );
 
-  const handleResolveHazard = useCallback(async (hazard: HazardRecord) => {
-    setResolvingId(hazard.id);
-    const currentResolved = hazard.resolved_count ?? 0;
-    try {
-      const updated = await resolveHazard(hazard.id);
-      const nextResolved = updated.resolved_count ?? currentResolved + 1;
-      const nextStatus =
-        updated.status === 'resolved' || nextResolved >= 3
-          ? 'resolved'
-          : hazard.status;
-      setHazards((prev) =>
-        prev.map((h) =>
-          h.id === hazard.id
-            ? {
-                ...h,
-                ...updated,
-                resolved_count: nextResolved,
-                status: nextStatus,
-              }
-            : h,
-        ),
-      );
-      if (nextStatus === 'resolved') {
-        setSelectedHazardId(null);
+  const handleResolveHazard = useCallback(
+    async (hazard: HazardRecord) => {
+      setResolvingId(hazard.id);
+      const currentResolved = hazard.resolved_count ?? 0;
+      try {
+        const updated = await resolveHazard(hazard.id, userTrustWeight);
+        const nextResolved =
+          updated.resolved_count ?? currentResolved + userTrustWeight;
+        const nextStatus =
+          updated.status === 'resolved' || nextResolved >= 2
+            ? 'resolved'
+            : hazard.status;
+        setHazards((prev) =>
+          prev.map((h) =>
+            h.id === hazard.id
+              ? {
+                  ...h,
+                  ...updated,
+                  image_url: updated.image_url ?? h.image_url,
+                  resolved_count: nextResolved,
+                  status: nextStatus,
+                }
+              : h,
+          ),
+        );
+        if (nextStatus === 'resolved') {
+          setSelectedHazardId(null);
+        }
+      } catch {
+        const nextResolved = currentResolved + userTrustWeight;
+        const nextStatus = nextResolved >= 2 ? 'resolved' : hazard.status;
+        setHazards((prev) =>
+          prev.map((h) =>
+            h.id === hazard.id
+              ? { ...h, resolved_count: nextResolved, status: nextStatus }
+              : h,
+          ),
+        );
+        if (nextStatus === 'resolved') {
+          setSelectedHazardId(null);
+        }
+      } finally {
+        setResolvingId(null);
       }
-    } catch {
-      const nextResolved = currentResolved + 1;
-      const nextStatus = nextResolved >= 3 ? 'resolved' : hazard.status;
-      setHazards((prev) =>
-        prev.map((h) =>
-          h.id === hazard.id
-            ? { ...h, resolved_count: nextResolved, status: nextStatus }
-            : h,
-        ),
-      );
-      if (nextStatus === 'resolved') {
-        setSelectedHazardId(null);
-      }
-    } finally {
-      setResolvingId(null);
-    }
-  }, []);
+    },
+    [userTrustWeight],
+  );
 
   const handleToggleDangerRings = useCallback(() => {
     setShowDangerRings((prev) => {
@@ -402,7 +929,9 @@ export default function MapScreen() {
     hazardFilters.maxDistanceKm !== null;
 
   const filteredHazards = useMemo(() => {
-    let list = hazards.filter((h) => h.status !== 'resolved');
+    let list = hazards.filter(
+      (h) => h.status !== 'resolved' && h.status !== 'expired',
+    );
 
     if (viewMode === 'pedestrian_night') {
       list = list.filter(
@@ -446,8 +975,8 @@ export default function MapScreen() {
       list = list.filter(
         (h) =>
           computeDistanceMeters(
-            DHAKA_CENTER.latitude,
-            DHAKA_CENTER.longitude,
+            userLocation.latitude,
+            userLocation.longitude,
             h.latitude,
             h.longitude,
           ) <= maxMeters,
@@ -469,14 +998,21 @@ export default function MapScreen() {
     }
 
     return list;
-  }, [hazards, viewMode, categoryFilter, hazardFilters, searchQuery]);
+  }, [
+    hazards,
+    viewMode,
+    categoryFilter,
+    hazardFilters,
+    searchQuery,
+    userLocation,
+  ]);
 
   const searchSuggestions = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
     if (q.length === 0) return [];
 
     const hazardMatches = hazards
-      .filter((h) => h.status !== 'resolved')
+      .filter((h) => h.status !== 'resolved' && h.status !== 'expired')
       .filter((h) => {
         const meta = CATEGORY_META[h.category];
         return (
@@ -554,6 +1090,10 @@ export default function MapScreen() {
           setMapCenter({ latitude: msg.latitude, longitude: msg.longitude });
         } else if (msg?.type === 'select' && typeof msg.id === 'string') {
           setTappedLocation(null);
+          setRouteOptions([]);
+          webViewRef.current?.injectJavaScript(
+            'window.clearSafeRoute && window.clearSafeRoute(); true;',
+          );
           setSelectedHazardId(msg.id);
         } else if (
           msg?.type === 'mapTap' &&
@@ -561,11 +1101,15 @@ export default function MapScreen() {
           typeof msg.longitude === 'number'
         ) {
           setSelectedHazardId(null);
+          setRouteOptions([]);
+          webViewRef.current?.injectJavaScript(
+            'window.clearSafeRoute && window.clearSafeRoute(); true;',
+          );
           setTappedLocation(
             resolveDhakaTappedLocation(
               msg.latitude,
               msg.longitude,
-              DHAKA_CENTER,
+              userLocation,
             ),
           );
         }
@@ -573,7 +1117,7 @@ export default function MapScreen() {
         // Ignore malformed messages
       }
     },
-    [],
+    [userLocation],
   );
 
   const handleZoomIn = () => {
@@ -586,6 +1130,7 @@ export default function MapScreen() {
 
   const handleLocate = () => {
     setMapCenter(DHAKA_CENTER);
+    setUserLocation(DHAKA_CENTER);
     webViewRef.current?.injectJavaScript(
       'window.recenterDhaka && window.recenterDhaka(); true;',
     );
@@ -603,6 +1148,29 @@ export default function MapScreen() {
       : 'map';
 
   const topInset = Platform.OS === 'android' ? 10 : 48;
+  const hasActiveRoutes = routeOptions.length > 0;
+
+  const safestOption = useMemo(
+    () =>
+      routeOptions.find(
+        (r) => r.id === 'safest' || r.label === 'Safest Route',
+      ) ?? routeOptions[0],
+    [routeOptions],
+  );
+  const fastestOption = useMemo(
+    () =>
+      routeOptions.find(
+        (r) => r.id === 'fastest' || r.label === 'Fastest Route',
+      ) ?? routeOptions[1],
+    [routeOptions],
+  );
+  const hazardsAvoidedCount = useMemo(() => {
+    if (!safestOption) return 0;
+    const diffFromFastest =
+      (fastestOption?.hazardsNearRoute ?? 0) - safestOption.hazardsNearRoute;
+    const diffFromCorridor = corridorHazardCount - safestOption.hazardsNearRoute;
+    return Math.max(0, diffFromFastest, diffFromCorridor);
+  }, [safestOption, fastestOption, corridorHazardCount]);
 
   return (
     <View style={[styles.container, { backgroundColor: theme.mapBg }]}>
@@ -623,7 +1191,7 @@ export default function MapScreen() {
         onMessage={handleWebViewMessage}
       />
 
-      {/* Top Header, Search Bar & Category Pills (Single View, zero extra top gap) */}
+      {/* Top Header, Search Bar & Category Pills */}
       <View
         style={[
           styles.headerPanel,
@@ -644,6 +1212,79 @@ export default function MapScreen() {
                 <Text style={styles.demoBadgeText}>DEMO</Text>
               </View>
             )}
+
+            {/* Auth & Profile Header Button next to বাংলা pill */}
+            <TouchableOpacity
+              style={[
+                styles.profileHeaderBtn,
+                {
+                  backgroundColor: currentUser
+                    ? isUserTrusted
+                      ? 'rgba(16, 185, 129, 0.18)'
+                      : theme.primarySurface
+                    : theme.pillBg,
+                  borderColor: currentUser
+                    ? isUserTrusted
+                      ? '#10B981'
+                      : theme.primary
+                    : theme.borderStrong,
+                },
+              ]}
+              onPress={() => {
+                if (currentUser) {
+                  setProfileModalOpen(true);
+                } else {
+                  setAuthModalOpen(true);
+                }
+              }}
+              activeOpacity={0.8}
+              accessibilityLabel="Open citizen profile or sign in"
+            >
+              <MapUiIcon
+                name={isUserTrusted ? 'shield-user' : 'user'}
+                size={13}
+                color={
+                  currentUser
+                    ? isUserTrusted
+                      ? '#34D399'
+                      : theme.primary
+                    : theme.localeText
+                }
+              />
+              {currentUser ? (
+                <>
+                  <Text
+                    style={[
+                      styles.profileHeaderBtnText,
+                      {
+                        color: isUserTrusted ? '#34D399' : theme.primaryText,
+                      },
+                    ]}
+                    numberOfLines={1}
+                  >
+                    {currentUser.display_name.split(' ')[0]}
+                  </Text>
+                  <View
+                    style={[
+                      styles.profileStatusDot,
+                      {
+                        backgroundColor: isUserTrusted ? '#10B981' : '#3B82F6',
+                      },
+                    ]}
+                  />
+                </>
+              ) : (
+                <Text
+                  style={[
+                    styles.profileHeaderBtnText,
+                    { color: theme.localeText },
+                  ]}
+                >
+                  {locale === 'bn' ? 'লগইন' : 'Sign In'}
+                </Text>
+              )}
+            </TouchableOpacity>
+
             <TouchableOpacity
               style={[
                 styles.localePill,
@@ -685,11 +1326,7 @@ export default function MapScreen() {
             },
           ]}
         >
-          <Ionicons
-            name="search-outline"
-            size={18}
-            color={theme.textSecondary}
-          />
+          <MapUiIcon name="search" size={18} color={theme.textSecondary} />
           <TextInput
             style={[styles.searchInput, { color: theme.text }]}
             placeholder={t.searchPlaceholder}
@@ -741,8 +1378,8 @@ export default function MapScreen() {
             }}
             activeOpacity={0.8}
           >
-            <Ionicons
-              name="options-outline"
+            <MapUiIcon
+              name="options"
               size={18}
               color={
                 filterModalOpen || hasActiveModalFilters || hasActiveFilter
@@ -785,11 +1422,12 @@ export default function MapScreen() {
                     );
                   } else {
                     setSelectedHazardId(null);
+                    clearSafeRoute();
                     setTappedLocation(
                       resolveDhakaTappedLocation(
                         item.latitude,
                         item.longitude,
-                        DHAKA_CENTER,
+                        userLocation,
                       ),
                     );
                     webViewRef.current?.injectJavaScript(
@@ -799,12 +1437,8 @@ export default function MapScreen() {
                 }}
                 activeOpacity={0.8}
               >
-                <Ionicons
-                  name={
-                    item.kind === 'hazard'
-                      ? 'warning-outline'
-                      : 'location-outline'
-                  }
+                <MapUiIcon
+                  name={item.kind === 'hazard' ? 'warning' : 'location'}
                   size={16}
                   color={item.kind === 'hazard' ? '#F59E0B' : theme.primary}
                 />
@@ -833,7 +1467,7 @@ export default function MapScreen() {
           </View>
         )}
 
-        {/* Horizontal Category Pills with Exact Figma SVG Icons */}
+        {/* Horizontal Category Pills */}
         <ScrollView
           horizontal
           showsHorizontalScrollIndicator={false}
@@ -907,13 +1541,67 @@ export default function MapScreen() {
         </ScrollView>
       </View>
 
+      {/* Dismissible Live Proximity Geofencing Danger Banner */}
+      {proximityAlert ? (
+        <TouchableOpacity
+          style={[styles.proximityBanner, { top: topInset + 148 }]}
+          activeOpacity={0.9}
+          onPress={() => {
+            setSelectedHazardId(proximityAlert.hazard.id);
+            webViewRef.current?.injectJavaScript(
+              `window.focusHazard && window.focusHazard(${proximityAlert.hazard.latitude}, ${proximityAlert.hazard.longitude}); true;`,
+            );
+          }}
+        >
+          <View style={styles.proximityBannerContent}>
+            <Text style={styles.proximityBannerTitle} numberOfLines={1}>
+              {locale === 'bn'
+                ? `⚠️ সামনেই উচ্চ ঝুঁকি (${proximityAlert.distanceMeters}m দূরে)!`
+                : `⚠️ High-Risk Hazard ${proximityAlert.distanceMeters}m ahead!`}
+            </Text>
+            <Text style={styles.proximityBannerSub} numberOfLines={1}>
+              {proximityAlert.hazard.landmark_context ||
+                CATEGORY_META[proximityAlert.hazard.category]?.name}
+            </Text>
+          </View>
+          <TouchableOpacity
+            style={styles.proximityBannerClose}
+            onPress={() => setProximityAlert(null)}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          >
+            <Text style={styles.proximityBannerCloseText}>✕</Text>
+          </TouchableOpacity>
+        </TouchableOpacity>
+      ) : (
+        /* Discreet Live Demo Proximity Check Pill */
+        <TouchableOpacity
+          style={[
+            styles.testAlertChip,
+            {
+              top: topInset + 148,
+              backgroundColor: isNighttime
+                ? 'rgba(22, 29, 44, 0.92)'
+                : 'rgba(255, 255, 255, 0.94)',
+              borderColor: 'rgba(245, 158, 11, 0.45)',
+            },
+          ]}
+          onPress={handleTriggerProximityCheck}
+          activeOpacity={0.85}
+        >
+          <MapUiIcon name="warning" size={13} color="#F59E0B" />
+          <Text style={[styles.testAlertChipText, { color: '#F59E0B' }]}>
+            {locale === 'bn' ? 'টেস্ট অ্যালার্ট' : 'Test Alert'}
+          </Text>
+        </TouchableOpacity>
+      )}
+
       {/* Layer Status Toast */}
-      {layerToast && (
+      {layerToast && !proximityAlert && (
         <View
           style={[
             styles.layerToastBadge,
             {
-              top: topInset + 148,
+              top: topInset + 186,
               backgroundColor: theme.surface,
               borderColor: showDangerRings ? '#EF4444' : theme.border,
             },
@@ -938,7 +1626,7 @@ export default function MapScreen() {
           onPress={handleZoomIn}
           activeOpacity={0.8}
         >
-          <Ionicons name="add" size={20} color={theme.controlIcon} />
+          <MapUiIcon name="add" size={20} color={theme.controlIcon} />
         </TouchableOpacity>
         <TouchableOpacity
           style={[
@@ -951,7 +1639,7 @@ export default function MapScreen() {
           onPress={handleZoomOut}
           activeOpacity={0.8}
         >
-          <Ionicons name="remove" size={20} color={theme.controlIcon} />
+          <MapUiIcon name="remove" size={20} color={theme.controlIcon} />
         </TouchableOpacity>
         <TouchableOpacity
           style={[
@@ -969,8 +1657,8 @@ export default function MapScreen() {
           onLongPress={() => setLayersModalOpen(true)}
           activeOpacity={0.8}
         >
-          <Ionicons
-            name="layers-outline"
+          <MapUiIcon
+            name="layers"
             size={19}
             color={showDangerRings ? '#F87171' : theme.controlIcon}
           />
@@ -986,15 +1674,11 @@ export default function MapScreen() {
           onPress={handleLocate}
           activeOpacity={0.8}
         >
-          <Ionicons
-            name="locate-outline"
-            size={20}
-            color={theme.controlIcon}
-          />
+          <MapUiIcon name="locate" size={20} color={theme.controlIcon} />
         </TouchableOpacity>
       </View>
 
-      {/* Floating Map Options Popover Card (Layers button) */}
+      {/* Floating Map Options Popover Card */}
       <Modal
         visible={layersModalOpen}
         transparent
@@ -1182,14 +1866,200 @@ export default function MapScreen() {
         </TouchableOpacity>
       </Modal>
 
-      {/* Tapped Map Location Action Card (Figma .tapped-location-sheet) */}
-      {tappedLocation && !selectedHazard && (
+      {/* Sleek Floating Multi-Route Risk Selector Card (Safest vs Fastest) */}
+      {hasActiveRoutes && !selectedHazard && (
+        <View
+          style={[
+            styles.routeSelectorCard,
+            {
+              backgroundColor: theme.surface,
+              borderColor:
+                selectedRouteId === 'safest' ? '#10B981' : '#F59E0B',
+            },
+          ]}
+        >
+          <View style={styles.routeSelectorHeader}>
+            <View style={styles.routeSelectorTitleWrap}>
+              <Text
+                style={[styles.routeSelectorTitle, { color: theme.text }]}
+                numberOfLines={1}
+              >
+                {locale === 'bn' ? 'গন্তব্য: ' : 'Route to '}
+                {routeTargetLabel}
+              </Text>
+              <Text
+                style={[
+                  styles.routeSelectorSub,
+                  { color: theme.textSecondary },
+                ]}
+                numberOfLines={1}
+              >
+                {locale === 'bn'
+                  ? 'লাইভ রুট তুলনা করতে নিচের কার্ডে ট্যাপ করুন'
+                  : 'Tap below to toggle Safest vs Fastest route live'}
+              </Text>
+            </View>
+            <TouchableOpacity
+              style={[
+                styles.tappedLocationCloseBtn,
+                {
+                  backgroundColor: theme.closeBtnBg,
+                  borderColor: theme.borderStrong,
+                },
+              ]}
+              onPress={clearSafeRoute}
+              activeOpacity={0.8}
+            >
+              <Text
+                style={[
+                  styles.tappedLocationCloseText,
+                  { color: theme.closeBtnText },
+                ]}
+              >
+                ×
+              </Text>
+            </TouchableOpacity>
+          </View>
+
+          <View style={styles.routeOptionsRow}>
+            {routeOptions.map((option) => {
+              const isSafest =
+                option.id === 'safest' || option.label === 'Safest Route';
+              const isActive = option.id === selectedRouteId;
+              const accentColor = isSafest
+                ? '#10B981'
+                : option.riskScore > 0
+                  ? '#F59E0B'
+                  : '#3B82F6';
+              const activeBg = isSafest
+                ? 'rgba(16, 185, 129, 0.16)'
+                : option.riskScore > 0
+                  ? 'rgba(245, 158, 11, 0.16)'
+                  : 'rgba(59, 130, 246, 0.16)';
+              const distKm = (Math.max(100, option.distanceMeters) / 1000).toFixed(
+                1,
+              );
+              const durMin = Math.max(1, Math.round(option.durationSeconds / 60));
+
+              return (
+                <TouchableOpacity
+                  key={option.id}
+                  style={[
+                    styles.routeOptionCard,
+                    {
+                      backgroundColor: isActive
+                        ? activeBg
+                        : theme.surfaceElevated,
+                      borderColor: isActive ? accentColor : theme.borderStrong,
+                    },
+                  ]}
+                  onPress={() => handleSelectRouteOption(option.id)}
+                  activeOpacity={0.85}
+                >
+                  <View style={styles.routeOptionTopRow}>
+                    <View
+                      style={[
+                        styles.routeColorDot,
+                        { backgroundColor: accentColor },
+                      ]}
+                    />
+                    <Text
+                      style={[
+                        styles.routeOptionLabel,
+                        { color: isActive ? accentColor : theme.text },
+                      ]}
+                      numberOfLines={1}
+                    >
+                      {isSafest
+                        ? locale === 'bn'
+                          ? '🛡️ নিরাপদ পথ'
+                          : '🛡️ Safest Route'
+                        : locale === 'bn'
+                          ? '⚡ দ্রুততম পথ'
+                          : '⚡ Fastest Route'}
+                    </Text>
+                  </View>
+
+                  <Text
+                    style={[styles.routeOptionMetrics, { color: theme.text }]}
+                    numberOfLines={1}
+                  >
+                    {durMin} min · {distKm} km
+                  </Text>
+
+                  <View style={styles.routeBadgeRow}>
+                    <View
+                      style={[
+                        styles.routeRiskBadge,
+                        {
+                          backgroundColor:
+                            option.riskScore === 0
+                              ? 'rgba(16, 185, 129, 0.18)'
+                              : 'rgba(245, 158, 11, 0.18)',
+                          borderColor:
+                            option.riskScore === 0
+                              ? 'rgba(52, 211, 153, 0.45)'
+                              : 'rgba(251, 191, 36, 0.45)',
+                        },
+                      ]}
+                    >
+                      <Text
+                        style={[
+                          styles.routeRiskBadgeText,
+                          {
+                            color:
+                              option.riskScore === 0 ? '#34D399' : '#FBBF24',
+                          },
+                        ]}
+                      >
+                        Risk {option.riskScore}
+                      </Text>
+                    </View>
+
+                    {isSafest ? (
+                      <View style={styles.routeAvoidedBadge}>
+                        <Text style={styles.routeAvoidedBadgeText}>
+                          {hazardsAvoidedCount > 0
+                            ? `${hazardsAvoidedCount} avoided`
+                            : `${option.hazardsNearRoute} hazards`}
+                        </Text>
+                      </View>
+                    ) : (
+                      <View
+                        style={[
+                          styles.routeRiskBadge,
+                          {
+                            backgroundColor: theme.surface,
+                            borderColor: theme.border,
+                          },
+                        ]}
+                      >
+                        <Text
+                          style={[
+                            styles.routeRiskBadgeText,
+                            { color: theme.textSecondary },
+                          ]}
+                        >
+                          {option.hazardsNearRoute} near
+                        </Text>
+                      </View>
+                    )}
+                  </View>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+        </View>
+      )}
+
+      {/* Tapped Map Location Action Card */}
+      {tappedLocation && !selectedHazard && !hasActiveRoutes && (
         <View
           style={[
             styles.tappedLocationCard,
             {
               backgroundColor: theme.surface,
-              borderColor: activeRoute ? '#10B981' : theme.primary,
+              borderColor: theme.primary,
             },
           ]}
         >
@@ -1234,69 +2104,13 @@ export default function MapScreen() {
             </TouchableOpacity>
           </View>
 
-          {activeRoute && (
-            <View
-              style={[
-                styles.safeRouteBar,
-                {
-                  backgroundColor: theme.verifiedBg,
-                  borderColor: theme.verifiedBorder,
-                },
-              ]}
-            >
-              <View style={styles.safeRouteInfo}>
-                <View style={styles.safeRouteBadgeRow}>
-                  <Text
-                    style={[
-                      styles.safeRouteBadgeText,
-                      { color: theme.verifiedText },
-                    ]}
-                  >
-                    🛡️ {t.actions.safeDetourActive}
-                  </Text>
-                </View>
-                <Text
-                  style={[styles.safeRouteMetaText, { color: theme.text }]}
-                  numberOfLines={1}
-                >
-                  {activeRoute.durationMin} min · {activeRoute.distanceKm} km ·{' '}
-                  {locale === 'bn'
-                    ? 'সক্রিয় ঝুঁকি এড়িয়ে'
-                    : 'Avoids active hazards'}
-                </Text>
-              </View>
-              <TouchableOpacity
-                style={[
-                  styles.clearRouteBtn,
-                  {
-                    backgroundColor: theme.surfaceElevated,
-                    borderColor: theme.verifiedBorder,
-                  },
-                ]}
-                onPress={clearSafeRoute}
-                activeOpacity={0.8}
-              >
-                <Text
-                  style={[
-                    styles.clearRouteBtnText,
-                    { color: theme.verifiedText },
-                  ]}
-                >
-                  {t.actions.clearRoute}
-                </Text>
-              </TouchableOpacity>
-            </View>
-          )}
-
           <View style={styles.tappedLocationActions}>
             <TouchableOpacity
               style={[
                 styles.tappedRouteBtn,
                 {
-                  borderColor: activeRoute ? '#10B981' : theme.primary,
-                  backgroundColor: activeRoute
-                    ? theme.verifiedBg
-                    : theme.primarySurface,
+                  borderColor: theme.primary,
+                  backgroundColor: theme.primarySurface,
                 },
               ]}
               onPress={() =>
@@ -1313,24 +2127,18 @@ export default function MapScreen() {
                 <ActivityIndicator size="small" color={theme.primary} />
               ) : (
                 <>
-                  <Ionicons
-                    name="git-branch-outline"
+                  <MapUiIcon
+                    name="git-branch"
                     size={16}
-                    color={activeRoute ? theme.verifiedText : theme.primary}
+                    color={theme.primary}
                   />
                   <Text
                     style={[
                       styles.tappedRouteBtnText,
-                      {
-                        color: activeRoute ? theme.verifiedText : theme.primary,
-                      },
+                      { color: theme.primary },
                     ]}
                   >
-                    {activeRoute
-                      ? locale === 'bn'
-                        ? 'পুনরায় হিসাব'
-                        : 'Recalculate'
-                      : t.actions.findRoute}
+                    {t.actions.findRoute}
                   </Text>
                 </>
               )}
@@ -1357,7 +2165,7 @@ export default function MapScreen() {
         </View>
       )}
 
-      {/* Selected Hazard Bottom Card (Figma .selected-marker-card) */}
+      {/* Selected Hazard Bottom Card with Photo Evidence Thumbnail */}
       {selectedHazard && (() => {
         const meta = CATEGORY_META[selectedHazard.category];
         const accent = isNighttime ? meta?.color : meta?.lightColor;
@@ -1377,6 +2185,19 @@ export default function MapScreen() {
         const confirmationsText = `${confirmationsCount} ${confirmationsCount === 1 ? 'confirmation' : 'confirmations'}`;
         const isConfirming = confirmingId === selectedHazard.id;
         const isResolving = resolvingId === selectedHazard.id;
+        const hasValidPhoto =
+          Boolean(selectedHazard.image_url?.trim()) &&
+          !failedThumbIds[selectedHazard.id];
+        const distMetersFromUser = computeDistanceMeters(
+          userLocation.latitude,
+          userLocation.longitude,
+          selectedHazard.latitude,
+          selectedHazard.longitude,
+        );
+        const distLabel =
+          distMetersFromUser < 1000
+            ? `${distMetersFromUser}m`
+            : `${(distMetersFromUser / 1000).toFixed(1)}km`;
 
         return (
           <View
@@ -1384,7 +2205,7 @@ export default function MapScreen() {
               styles.selectedCard,
               {
                 backgroundColor: theme.surface,
-                borderColor: activeRoute ? '#10B981' : theme.border,
+                borderColor: theme.border,
               },
             ]}
           >
@@ -1449,7 +2270,6 @@ export default function MapScreen() {
                   ]}
                   onPress={() => {
                     setSelectedHazardId(null);
-                    clearSafeRoute();
                   }}
                   activeOpacity={0.8}
                 >
@@ -1465,93 +2285,69 @@ export default function MapScreen() {
               </View>
             </View>
 
-            <Text
-              style={[styles.selectedTitle, { color: theme.text }]}
-              numberOfLines={1}
-            >
-              {selectedHazard.landmark_context || meta?.name}
-            </Text>
-            <Text style={[styles.selectedMeta, { color: theme.textSecondary }]}>
-              {t.cityBadge} · Reported recently · {confirmationsText}
-            </Text>
-
-            {activeRoute ? (
-              <View
-                style={[
-                  styles.safeRouteBar,
-                  {
-                    backgroundColor: theme.verifiedBg,
-                    borderColor: theme.verifiedBorder,
-                  },
-                ]}
-              >
-                <View style={styles.safeRouteInfo}>
-                  <View style={styles.safeRouteBadgeRow}>
-                    <Text
-                      style={[
-                        styles.safeRouteBadgeText,
-                        { color: theme.verifiedText },
-                      ]}
-                    >
-                      🛡️ {t.actions.safeDetourActive}
-                    </Text>
-                  </View>
-                  <Text
-                    style={[styles.safeRouteMetaText, { color: theme.text }]}
-                    numberOfLines={1}
-                  >
-                    {activeRoute.durationMin} min · {activeRoute.distanceKm} km ·{' '}
-                    {locale === 'bn'
-                      ? 'সক্রিয় ঝুঁকি এড়িয়ে'
-                      : 'Avoids active hazards'}
-                  </Text>
-                </View>
-                <TouchableOpacity
-                  style={[
-                    styles.clearRouteBtn,
-                    {
-                      backgroundColor: theme.surfaceElevated,
-                      borderColor: theme.verifiedBorder,
-                    },
-                  ]}
-                  onPress={clearSafeRoute}
-                  activeOpacity={0.8}
-                >
-                  <Text
-                    style={[
-                      styles.clearRouteBtnText,
-                      { color: theme.verifiedText },
-                    ]}
-                  >
-                    {t.actions.clearRoute}
-                  </Text>
-                </TouchableOpacity>
-              </View>
-            ) : (
-              <View
-                style={[
-                  styles.distanceNoticeBar,
-                  {
-                    backgroundColor: theme.noticeBg,
-                    borderColor: theme.noticeBorder,
-                  },
-                ]}
-              >
-                <Ionicons
-                  name="location-outline"
-                  size={14}
-                  color={theme.noticeText}
-                />
+            <View style={styles.selectedBodyRow}>
+              <View style={styles.selectedTextCol}>
                 <Text
-                  style={[
-                    styles.distanceNoticeText,
-                    { color: theme.noticeText },
-                  ]}
+                  style={[styles.selectedTitle, { color: theme.text }]}
+                  numberOfLines={1}
                 >
-                  Within 150m required to vote (180m {t.actions.away})
+                  {selectedHazard.landmark_context || meta?.name}
+                </Text>
+                <Text
+                  style={[styles.selectedMeta, { color: theme.textSecondary }]}
+                  numberOfLines={1}
+                >
+                  {t.cityBadge} · {confirmationsText}
+                  {selectedHazard.sub_tag ? ` · ${selectedHazard.sub_tag}` : ''}
                 </Text>
               </View>
-            )}
+
+              {hasValidPhoto && selectedHazard.image_url && (
+                <View
+                  style={[
+                    styles.evidenceThumbWrap,
+                    { borderColor: theme.borderStrong },
+                  ]}
+                >
+                  <Image
+                    source={{ uri: selectedHazard.image_url }}
+                    style={styles.evidenceThumbnail}
+                    resizeMode="cover"
+                    onError={() =>
+                      setFailedThumbIds((prev) => ({
+                        ...prev,
+                        [selectedHazard.id]: true,
+                      }))
+                    }
+                  />
+                  <View style={styles.evidenceBadge}>
+                    <Text style={styles.evidenceBadgeText}>
+                      {locale === 'bn' ? '📷 প্রমাণ' : '📷 Photo'}
+                    </Text>
+                  </View>
+                </View>
+              )}
+            </View>
+
+            <View
+              style={[
+                styles.distanceNoticeBar,
+                {
+                  backgroundColor: theme.noticeBg,
+                  borderColor: theme.noticeBorder,
+                },
+              ]}
+            >
+              <MapUiIcon name="location" size={14} color={theme.noticeText} />
+              <Text
+                style={[styles.distanceNoticeText, { color: theme.noticeText }]}
+                numberOfLines={1}
+              >
+                {isUserTrusted
+                  ? `🛡️ Trusted 2x vote weight active (${distLabel} ${t.actions.away})`
+                  : `Community verification active (${distLabel} ${t.actions.away})`}
+              </Text>
+            </View>
 
             <View style={styles.selectedActionsRow}>
               <TouchableOpacity
@@ -1576,8 +2372,8 @@ export default function MapScreen() {
                   <ActivityIndicator size="small" color={theme.primary} />
                 ) : (
                   <>
-                    <Ionicons
-                      name="git-branch-outline"
+                    <MapUiIcon
+                      name="git-branch"
                       size={15}
                       color={theme.primary}
                     />
@@ -1653,11 +2449,15 @@ export default function MapScreen() {
       <AlertsModal
         visible={alertsSheetOpen}
         onClose={() => setAlertsSheetOpen(false)}
-        hazards={filteredHazards}
+        hazards={filteredHazards.map((h) => ({
+          ...h,
+          image_url: h.image_url ?? undefined,
+        }))}
         isDarkMode={isNighttime}
         language={locale}
         onSelectHazard={(hazard) => {
           setAlertsSheetOpen(false);
+          clearSafeRoute();
           setSelectedHazardId(hazard.id);
           webViewRef.current?.injectJavaScript(
             `window.focusHazard && window.focusHazard(${hazard.latitude}, ${hazard.longitude}); true;`,
@@ -1689,8 +2489,8 @@ export default function MapScreen() {
               activeTab === 'map' && { backgroundColor: theme.primarySurface },
             ]}
           >
-            <Ionicons
-              name="map-outline"
+            <MapUiIcon
+              name="map"
               size={20}
               color={activeTab === 'map' ? theme.primary : theme.navInactive}
             />
@@ -1726,8 +2526,8 @@ export default function MapScreen() {
               },
             ]}
           >
-            <Ionicons
-              name="notifications-outline"
+            <MapUiIcon
+              name="notifications"
               size={20}
               color={activeTab === 'alerts' ? theme.primary : theme.navInactive}
             />
@@ -1762,7 +2562,7 @@ export default function MapScreen() {
               },
             ]}
           >
-            <Ionicons
+            <MapUiIcon
               name="add"
               size={22}
               color={activeTab === 'report' ? theme.primary : theme.navInactive}
@@ -1807,6 +2607,26 @@ export default function MapScreen() {
           setReportModalVisible(false);
         }}
         onSubmitHazard={handleSubmitHazard}
+        isDark={isNighttime}
+        language={locale}
+      />
+
+      <AuthModal
+        visible={authModalOpen}
+        onClose={() => setAuthModalOpen(false)}
+        onAuthSuccess={handleAuthSuccess}
+        isDark={isNighttime}
+        language={locale}
+      />
+
+      <ProfileModal
+        visible={profileModalOpen}
+        onClose={() => setProfileModalOpen(false)}
+        user={currentUser}
+        totalReportsCount={userReportsCount}
+        onSignOut={() => setCurrentUser(null)}
+        isDark={isNighttime}
+        language={locale}
       />
     </View>
   );
