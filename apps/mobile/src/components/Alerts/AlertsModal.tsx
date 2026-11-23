@@ -1,6 +1,7 @@
 import React, { useMemo } from 'react';
 import {
   FlatList,
+  Image,
   Modal,
   StyleSheet,
   Text,
@@ -15,7 +16,11 @@ import type {
 } from '../../../../../packages/shared/api-contract';
 
 export type { HazardCategory, HazardRecord, HazardSeverity };
-export type Hazard = HazardRecord;
+export type Hazard = HazardRecord & {
+  image_url?: string;
+  imageUrl?: string;
+  imageUri?: string;
+};
 
 export interface AlertsModalProps {
   visible: boolean;
@@ -446,6 +451,35 @@ export const AlertsModal: React.FC<AlertsModalProps> = ({
                     </View>
                   ) : null}
 
+                  {/* Thumbnail Image Preview if present */}
+                  {Boolean(item.image_url || (item as any).imageUrl || (item as any).imageUri) && (
+                    <View
+                      style={[
+                        styles.imagePreviewContainer,
+                        {
+                          backgroundColor: isDark ? '#0F172A' : '#E2E8F0',
+                          borderColor: theme.cardBorder,
+                        },
+                      ]}
+                    >
+                      <Image
+                        source={{
+                          uri: (item.image_url ||
+                            (item as any).imageUrl ||
+                            (item as any).imageUri) as string,
+                        }}
+                        style={styles.hazardThumbnail}
+                        resizeMode="cover"
+                      />
+                      <View style={styles.imageOverlayBadge}>
+                        <Ionicons name="camera" size={11} color="#FFFFFF" />
+                        <Text style={styles.imageOverlayText}>
+                          {language === 'bn' ? 'ছবির প্রমাণ' : 'Photo Evidence'}
+                        </Text>
+                      </View>
+                    </View>
+                  )}
+
                   {/* Details / Confirmation / Coords Row */}
                   <View style={styles.metaRow}>
                     <View style={styles.metaItem}>
@@ -689,6 +723,35 @@ const styles = StyleSheet.create({
   subtagText: {
     color: '#FB923C',
     fontSize: 11,
+    fontWeight: '600',
+  },
+  imagePreviewContainer: {
+    height: 150,
+    borderRadius: 12,
+    borderWidth: 1,
+    overflow: 'hidden',
+    position: 'relative',
+    marginVertical: 4,
+  },
+  hazardThumbnail: {
+    width: '100%',
+    height: '100%',
+  },
+  imageOverlayBadge: {
+    position: 'absolute',
+    bottom: 8,
+    left: 8,
+    backgroundColor: 'rgba(15, 23, 42, 0.78)',
+    borderRadius: 6,
+    paddingHorizontal: 7,
+    paddingVertical: 3,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  imageOverlayText: {
+    color: '#F8FAFC',
+    fontSize: 10.5,
     fontWeight: '600',
   },
   metaRow: {
