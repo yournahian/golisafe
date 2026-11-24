@@ -53,6 +53,63 @@ export const VALID_SEVERITIES: readonly HazardSeverity[] = [
   'Critical',
 ] as const;
 
+// In-memory sliding window rate limiter: max 3 reports per 10 minutes per device (FR-02, NFR-08)
+export const reportRateLimitMap = new Map<string, number[]>();
+export const RATE_LIMIT_WINDOW_MS = 10 * 60 * 1000; // 10 minutes
+export const RATE_LIMIT_MAX_REPORTS = 3;
+
+export function checkRateLimit(deviceToken: string): boolean {
+  const now = Date.now();
+  const existing = reportRateLimitMap.get(deviceToken) || [];
+  const valid = existing.filter((ts) => now - ts < RATE_LIMIT_WINDOW_MS);
+
+  if (valid.length >= RATE_LIMIT_MAX_REPORTS) {
+    reportRateLimitMap.set(deviceToken, valid);
+    return false;
+  }
+
+  valid.push(now);
+  reportRateLimitMap.set(deviceToken, valid);
+  return true;
+}
+
+const SPAM_PATTERNS = [
+  /(.)\1{6,}/, // 7+ repeating characters
+  /\b(viagra|casino|crypto|lottery|free money|click here|sex|porn|nude)\b/i,
+  /\b(bal|chuda|magi|khanki|shala|bokachoda)\b/i,
+];
+
+export function isSpamOrAbusive(text?: string | null): boolean {
+  if (!text) return false;
+  const trimmed = text.trim();
+  for (const pattern of SPAM_PATTERNS) {
+    if (pattern.test(trimmed)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+export function haversineDistanceMeters(
+  lat1: number,
+  lon1: number,
+  lat2: number,
+  lon2: number
+): number {
+  const toRad = (deg: number) => (deg * Math.PI) / 180;
+  const R = 6371000;
+  const dLat = toRad(lat2 - lat1);
+  const dLon = toRad(lon2 - lon1);
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(toRad(lat1)) *
+      Math.cos(toRad(lat2)) *
+      Math.sin(dLon / 2) *
+      Math.sin(dLon / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return Math.round(R * c);
+}
+
 const router = Router();
 
 let supabaseClient: SupabaseClient | null = null;
@@ -62,7 +119,6 @@ export function getSupabaseClient(): SupabaseClient | null {
     return supabaseClient;
   }
 
-  // Attempt to use the shared configured client from ../config/supabase if available
   try {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const supabaseModule = require('../config/supabase');
@@ -125,7 +181,9 @@ export function normalizeSeverity(severity?: string): HazardSeverity | null {
 }
 
 /**
- * Automatically filters out hazards that are expired, resolved, or past their expires_at TTL.
+ * Automatically filters out hazards that are expired or resolved (FR-24, NFR-21).
+ * Structural hazards ('pothole_manhole', 'unsafe_footbridge') persist until resolved.
+ * Temporary hazards ('waterlogging', 'extortion_spot', 'unlit_alley') expire on read if expires_at is past.
  */
 export function filterActiveAndUnexpired(hazards: HazardRecord[]): HazardRecord[] {
   const now = Date.now();
@@ -133,12 +191,19 @@ export function filterActiveAndUnexpired(hazards: HazardRecord[]): HazardRecord[
     if (h.status === 'resolved' || (h.status as string) === 'expired') {
       return false;
     }
-    if (h.expires_at) {
+
+    const isTemporary =
+      h.category === 'waterlogging' ||
+      h.category === 'extortion_spot' ||
+      h.category === 'unlit_alley';
+
+    if (isTemporary && h.expires_at) {
       const exp = new Date(h.expires_at).getTime();
       if (!isNaN(exp) && exp < now) {
         return false;
       }
     }
+
     return true;
   });
 }
@@ -163,6 +228,60 @@ export function filterMockHazards(
   }
 
   return activeMocks;
+}
+
+async function findRecentDuplicateHazard(
+  supabase: SupabaseClient | null,
+  category: HazardCategory,
+  lat: number,
+  lng: number
+): Promise<HazardRecord | null> {
+  const DUPLICATE_WINDOW_MS = 5 * 60 * 1000; // 5 minutes
+  const DUPLICATE_DISTANCE_METERS = 20; // 20 meters
+  const now = Date.now();
+
+  // 1. Check in-memory store
+  for (const h of mockHazards) {
+    if (
+      h.category === category &&
+      h.status !== 'resolved' &&
+      (h.status as any) !== 'expired'
+    ) {
+      const createdTime = new Date(h.created_at).getTime();
+      if (!isNaN(createdTime) && now - createdTime <= DUPLICATE_WINDOW_MS) {
+        const dist = haversineDistanceMeters(lat, lng, h.latitude, h.longitude);
+        if (dist <= DUPLICATE_DISTANCE_METERS) {
+          return h;
+        }
+      }
+    }
+  }
+
+  // 2. Check Supabase if available
+  if (supabase) {
+    try {
+      const fiveMinsAgo = new Date(now - DUPLICATE_WINDOW_MS).toISOString();
+      const { data, error } = await supabase
+        .from('hazards')
+        .select(BASE_COLUMNS)
+        .eq('category', category)
+        .in('status', ['active', 'crowd_verified'])
+        .gte('created_at', fiveMinsAgo);
+
+      if (!error && Array.isArray(data)) {
+        for (const h of data) {
+          const dist = haversineDistanceMeters(lat, lng, h.latitude, h.longitude);
+          if (dist <= DUPLICATE_DISTANCE_METERS) {
+            return h as HazardRecord;
+          }
+        }
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  return null;
 }
 
 async function fetchHazardById(supabase: SupabaseClient, hazardId: string) {
@@ -264,7 +383,6 @@ async function applyHazardUpdate(
 }
 
 // In-memory fallback mock hazards matching database/02_seed_dhaka_hazards.sql
-// Used when Supabase is unconfigured or unavailable during live demo presentations.
 export const DEFAULT_MOCK_HAZARDS: HazardRecord[] = [
   {
     id: 'd0000000-0000-0000-0000-000000000001',
@@ -367,7 +485,7 @@ export const DEFAULT_MOCK_HAZARDS: HazardRecord[] = [
     sub_tag: 'Dim street lighting',
     status: 'resolved',
     confirmations: 1,
-    resolved_count: 2,
+    resolved_count: 3,
     created_at: new Date(Date.now() - 3600000 * 16).toISOString(),
   },
   {
@@ -426,9 +544,6 @@ export const DEFAULT_MOCK_HAZARDS: HazardRecord[] = [
 
 export let mockHazards: HazardRecord[] = [...DEFAULT_MOCK_HAZARDS];
 
-/**
- * Helper to update mock hazards in memory for confirm action.
- */
 function confirmMockHazard(hazardId: string, res: Response, trustWeight = 1) {
   const index = mockHazards.findIndex((h) => h.id === hazardId);
   if (index === -1) {
@@ -447,9 +562,6 @@ function confirmMockHazard(hazardId: string, res: Response, trustWeight = 1) {
   return res.status(200).json(updatedHazard);
 }
 
-/**
- * Helper to update mock hazards in memory for resolve action.
- */
 function resolveMockHazard(
   hazardId: string,
   res: Response,
@@ -463,7 +575,7 @@ function resolveMockHazard(
     const existing = mockHazards[index];
     const nextResolved =
       nextResolvedCount ?? (existing.resolved_count || 0) + trustWeight;
-    const status = nextStatus ?? (nextResolved >= 2 ? 'resolved' : existing.status);
+    const status = nextStatus ?? (nextResolved >= 3 ? 'resolved' : existing.status);
     const updatedHazard: HazardRecord = {
       ...existing,
       resolved_count: nextResolved,
@@ -477,7 +589,7 @@ function resolveMockHazard(
     const nextResolved =
       nextResolvedCount ?? (existingRecord.resolved_count || 0) + trustWeight;
     const status =
-      nextStatus ?? (nextResolved >= 2 ? 'resolved' : (existingRecord.status || 'active'));
+      nextStatus ?? (nextResolved >= 3 ? 'resolved' : (existingRecord.status || 'active'));
     const updatedHazard: HazardRecord = {
       ...existingRecord,
       resolved_count: nextResolved,
@@ -622,8 +734,9 @@ const handleResolveHazard = async (req: Request, res: Response) => {
           return res.status(404).json({ error: 'Hazard not found' });
         }
 
+        // FR-24 & NFR-21: Require at least 3 crowd consensus votes to de-escalate to resolved
         const nextResolved = (existingRecord.resolved_count || 0) + trustWeight;
-        const shouldResolve = nextResolved >= 2;
+        const shouldResolve = nextResolved >= 3;
         const nextStatus: 'active' | 'crowd_verified' | 'resolved' = shouldResolve
           ? 'resolved'
           : existingRecord.status || 'active';
@@ -683,7 +796,6 @@ const handleResolveHazard = async (req: Request, res: Response) => {
 /**
  * PATCH /api/hazards/:id/confirm
  * POST  /api/hazards/:id/confirm
- * Increment confirmation count by trustWeight (default 1) and promote to 'crowd_verified' at >= 3 confirmations.
  */
 router.patch('/:id/confirm', handleConfirmHazard);
 router.post('/:id/confirm', handleConfirmHazard);
@@ -691,7 +803,7 @@ router.post('/:id/confirm', handleConfirmHazard);
 /**
  * PATCH /api/hazards/:id/resolve
  * POST  /api/hazards/:id/resolve
- * Increment resolved_count by trustWeight (default 1); promote to 'resolved' at >= 2.
+ * Lifecycle rule: Promotes to 'resolved' at resolved_count >= 3 (FR-24, NFR-21).
  */
 router.patch('/:id/resolve', handleResolveHazard);
 router.post('/:id/resolve', handleResolveHazard);
@@ -699,7 +811,7 @@ router.post('/:id/resolve', handleResolveHazard);
 /**
  * GET /api/hazards
  * Query active hazards ('active' or 'crowd_verified') ordered by created_at DESC.
- * Automatically excludes hazards that are 'expired', 'resolved', or where 'expires_at' is in the past.
+ * Lazy TTL filtering: Excludes expired temporary hazards; structural hazards persist.
  */
 router.get('/', async (req: Request, res: Response) => {
   const { severity, verified } = req.query;
@@ -729,7 +841,6 @@ router.get('/', async (req: Request, res: Response) => {
 
         const result: any = await query.order('created_at', { ascending: false });
         if (!result.error && Array.isArray(result.data)) {
-          // Lazy TTL enforcement: filter out past expires_at and resolved/expired statuses
           const unexpired = filterActiveAndUnexpired(result.data as HazardRecord[]);
           const mapped = unexpired.map((h) => ({
             ...h,
@@ -753,10 +864,24 @@ router.get('/', async (req: Request, res: Response) => {
 
 /**
  * POST /api/hazards
- * Create a new hazard record with validation, saving optional image_url and reported_by.
+ * Creates a new hazard record with rate-limiting, anti-spam, and 20m duplicate checks.
  */
 router.post('/', async (req: Request, res: Response) => {
   try {
+    // 1. Rate Limiting Check (FR-02, NFR-08: Max 3 reports per 10 minutes per device)
+    const deviceToken =
+      (req.headers['x-device-hash'] as string) ||
+      req.ip ||
+      req.socket.remoteAddress ||
+      'anonymous-device';
+
+    if (!checkRateLimit(deviceToken)) {
+      return res.status(429).json({
+        error:
+          'Rate limit exceeded: maximum 3 hazard reports per 10 minutes allowed per device token.',
+      });
+    }
+
     const {
       category,
       severity,
@@ -767,6 +892,14 @@ router.post('/', async (req: Request, res: Response) => {
       image_url,
       reported_by,
     } = req.body as Partial<CreateHazardRequest>;
+
+    // 2. Anti-Spam / Abusive Content Filter (FR-12)
+    if (isSpamOrAbusive(landmark_context) || isSpamOrAbusive(sub_tag)) {
+      return res.status(400).json({
+        error:
+          'Report rejected: content flagged as spam, repetitive gibberish, or abusive language.',
+      });
+    }
 
     if (!category || !VALID_CATEGORIES.includes(category as HazardCategory)) {
       return res.status(400).json({
@@ -800,8 +933,25 @@ router.post('/', async (req: Request, res: Response) => {
     }
 
     const resolvedSeverity: HazardSeverity = severity || 'Medium';
-
     const supabase = getSupabaseClient();
+
+    // 3. Duplicate Check (FR-12: Reject duplicate of same category within 20m in last 5 minutes)
+    const duplicate = await findRecentDuplicateHazard(
+      supabase,
+      category as HazardCategory,
+      latitude,
+      longitude
+    );
+
+    if (duplicate) {
+      return res.status(409).json({
+        error:
+          'Duplicate report: an active hazard of the same category was already reported within 20 meters in the last 5 minutes.',
+        existingHazardId: duplicate.id,
+      });
+    }
+
+    // 4. Persistence into Supabase with multi-tier schema fallback
     if (supabase) {
       const insertRecord: Record<string, any> = {
         category,
@@ -867,6 +1017,7 @@ router.post('/', async (req: Request, res: Response) => {
       }
     }
 
+    // In-memory fallback if Supabase is offline
     const newHazard: HazardRecord = {
       id: `hazard-${Date.now()}`,
       category: category as HazardCategory,

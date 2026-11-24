@@ -14,6 +14,7 @@ import {
 } from 'react-native';
 import * as Location from 'expo-location';
 import * as Notifications from 'expo-notifications';
+import * as Speech from 'expo-speech';
 import Svg, { Circle, Ellipse, Path } from 'react-native-svg';
 import { WebView, type WebViewMessageEvent } from 'react-native-webview';
 import type {
@@ -71,6 +72,13 @@ try {
   // Notification handler optional on unsupported runtimes
 }
 
+const PROXIMITY_RADIUS_METERS = 100;
+
+function isDeviceNightHours(): boolean {
+  const hour = new Date().getHours();
+  return hour >= 18 || hour < 6;
+}
+
 type ViewMode = 'all' | 'pedestrian_night' | 'driver_biker';
 type CategoryFilter = 'all' | HazardCategory;
 type BottomTab = 'map' | 'alerts' | 'report';
@@ -78,6 +86,7 @@ type BottomTab = 'map' | 'alerts' | 'report';
 interface ProximityAlertState {
   hazard: HazardRecord;
   distanceMeters: number;
+  isNightPriority: boolean;
 }
 
 type MapUiIconName =
@@ -370,7 +379,9 @@ export default function MapScreen() {
   const [viewMode, setViewMode] = useState<ViewMode>('all');
   const [categoryFilter, setCategoryFilter] = useState<CategoryFilter>('all');
   const [highContrastMap, setHighContrastMap] = useState<boolean>(false);
-  const [isNighttime, setIsNighttime] = useState<boolean>(true);
+  const [isNighttime, setIsNighttime] = useState<boolean>(() =>
+    isDeviceNightHours(),
+  );
   const [demoMode, setDemoMode] = useState<boolean>(false);
   const [selectedHazardId, setSelectedHazardId] = useState<string | null>(null);
   const [reportModalVisible, setReportModalVisible] = useState<boolean>(false);
@@ -392,6 +403,10 @@ export default function MapScreen() {
 
   // Proximity Geofencing & Live Location State
   const [userLocation, setUserLocation] = useState(DHAKA_CENTER);
+  const [gpsAccuracyMeters, setGpsAccuracyMeters] = useState<number | null>(
+    null,
+  );
+  const [gpsBannerDismissed, setGpsBannerDismissed] = useState<boolean>(false);
   const [proximityAlert, setProximityAlert] =
     useState<ProximityAlertState | null>(null);
   const [failedThumbIds, setFailedThumbIds] = useState<Record<string, boolean>>(
@@ -482,6 +497,42 @@ export default function MapScreen() {
     [locale],
   );
 
+  const speakProximityWarning = useCallback(
+    (hazard: HazardRecord, distanceMeters: number, isNightPriority: boolean) => {
+      try {
+        Speech.stop();
+        if (locale === 'bn') {
+          const bnDist = distanceMeters <= 100 ? '১০০' : String(distanceMeters);
+          const bnPrefix = isNightPriority
+            ? 'রাতের জরুরি সতর্কতা! '
+            : '';
+          Speech.speak(
+            `${bnPrefix}সাবধান! সামনে ${bnDist} মিটার দূরে ঝুঁকি আছে`,
+            {
+              language: 'bn-BD',
+              rate: 0.95,
+              pitch: 1.0,
+            },
+          );
+        } else {
+          const meta = CATEGORY_META[hazard.category];
+          const nightTag = isNightPriority ? 'Night priority alert. ' : '';
+          Speech.speak(
+            `${nightTag}Caution! ${meta?.name || 'High-risk hazard'} ${distanceMeters} meters ahead.`,
+            {
+              language: 'en-US',
+              rate: 0.98,
+              pitch: 1.0,
+            },
+          );
+        }
+      } catch {
+        // Ignore TTS engine errors on unsupported devices
+      }
+    },
+    [locale],
+  );
+
   const evaluateProximityGeofence = useCallback(
     (
       lat: number,
@@ -489,45 +540,65 @@ export default function MapScreen() {
       hazardList: HazardRecord[],
       forceNotify = false,
     ): ProximityAlertState | null => {
-      const highRiskActive = hazardList.filter(
-        (h) =>
-          h.status !== 'resolved' &&
-          h.status !== 'expired' &&
-          (h.severity === 'Critical' || (h.severity as string) === 'High'),
-      );
+      const nightWindowActive = isNighttime || isDeviceNightHours();
 
-      let nearest: HazardRecord | null = null;
-      let minDist = Number.POSITIVE_INFINITY;
+      const candidateHazards = hazardList.filter((h) => {
+        if (h.status === 'resolved' || h.status === 'expired') return false;
+        const isHighSeverity =
+          h.severity === 'Critical' || (h.severity as string) === 'High';
+        const isNightCategory =
+          nightWindowActive &&
+          (h.category === 'unlit_alley' || h.category === 'unsafe_footbridge');
+        return isHighSeverity || isNightCategory;
+      });
 
-      for (const h of highRiskActive) {
+      let chosen: HazardRecord | null = null;
+      let chosenDist = Number.POSITIVE_INFINITY;
+      let chosenIsNightPriority = false;
+      let bestScore = Number.POSITIVE_INFINITY;
+
+      for (const h of candidateHazards) {
         const d = computeDistanceMeters(lat, lng, h.latitude, h.longitude);
-        if (d < minDist) {
-          minDist = d;
-          nearest = h;
+        if (d > PROXIMITY_RADIUS_METERS) continue;
+
+        const isNightPriority =
+          nightWindowActive &&
+          (h.category === 'unlit_alley' || h.category === 'unsafe_footbridge');
+        // Elevate night-priority hazards (unlit alleys & nighttime footbridges)
+        // when multiple hazards fall inside the 100m geofence
+        const priorityScore = isNightPriority ? d - 40 : d;
+
+        if (priorityScore < bestScore) {
+          bestScore = priorityScore;
+          chosen = h;
+          chosenDist = d;
+          chosenIsNightPriority = isNightPriority;
         }
       }
 
-      if (nearest && minDist <= 250) {
-        const distRounded = Math.max(15, minDist);
+      if (chosen && chosenDist <= PROXIMITY_RADIUS_METERS) {
+        const distRounded = Math.max(10, Math.min(PROXIMITY_RADIUS_METERS, chosenDist));
         const alertObj: ProximityAlertState = {
-          hazard: nearest,
+          hazard: chosen,
           distanceMeters: distRounded,
+          isNightPriority: chosenIsNightPriority,
         };
         setProximityAlert(alertObj);
 
-        if (forceNotify || lastNotifiedHazardRef.current !== nearest.id) {
-          lastNotifiedHazardRef.current = nearest.id;
-          sendProximityLocalNotification(nearest, distRounded);
+        if (forceNotify || lastNotifiedHazardRef.current !== chosen.id) {
+          lastNotifiedHazardRef.current = chosen.id;
+          sendProximityLocalNotification(chosen, distRounded);
+          speakProximityWarning(chosen, distRounded, chosenIsNightPriority);
         }
         return alertObj;
       }
 
       return null;
     },
-    [sendProximityLocalNotification],
+    [isNighttime, sendProximityLocalNotification, speakProximityWarning],
   );
 
-  // Watch live GPS foreground updates for automatic 250m proximity geofencing
+  // Watch live GPS foreground updates for automatic 100m proximity geofencing & accuracy checks
   useEffect(() => {
     let sub: Location.LocationSubscription | null = null;
     let mounted = true;
@@ -540,8 +611,8 @@ export default function MapScreen() {
         sub = await Location.watchPositionAsync(
           {
             accuracy: Location.Accuracy.Balanced,
-            distanceInterval: 25,
-            timeInterval: 10000,
+            distanceInterval: 15,
+            timeInterval: 8000,
           },
           (loc) => {
             if (!mounted) return;
@@ -550,6 +621,12 @@ export default function MapScreen() {
               longitude: loc.coords.longitude,
             };
             setUserLocation(nextCoords);
+            if (typeof loc.coords.accuracy === 'number') {
+              setGpsAccuracyMeters(loc.coords.accuracy);
+              if (loc.coords.accuracy <= 50) {
+                setGpsBannerDismissed(false);
+              }
+            }
             webViewRef.current?.injectJavaScript(
               `window.updateUserLocation && window.updateUserLocation(${nextCoords.latitude}, ${nextCoords.longitude}); true;`,
             );
@@ -590,41 +667,57 @@ export default function MapScreen() {
       return;
     }
 
-    // For live classroom/demo presentation when GPS is >250m from High/Critical pins:
-    // simulate user position ~180m ahead of the nearest active High/Critical hazard
-    const highRiskActive = hazards.filter(
-      (h) =>
-        h.status !== 'resolved' &&
-        h.status !== 'expired' &&
-        (h.severity === 'Critical' || (h.severity as string) === 'High'),
-    );
-    if (highRiskActive.length === 0) return;
+    // For live classroom/demo presentation when GPS is >100m from qualifying pins:
+    // simulate user position ~85m ahead of the nearest active High/Critical or night-priority hazard
+    const nightWindowActive = isNighttime || isDeviceNightHours();
+    const eligibleHazards = hazards.filter((h) => {
+      if (h.status === 'resolved' || h.status === 'expired') return false;
+      const isHigh =
+        h.severity === 'Critical' || (h.severity as string) === 'High';
+      const isNightCat =
+        nightWindowActive &&
+        (h.category === 'unlit_alley' || h.category === 'unsafe_footbridge');
+      return isHigh || isNightCat;
+    });
+    if (eligibleHazards.length === 0) return;
 
-    const target = [...highRiskActive].sort(
-      (a, b) =>
+    const target = [...eligibleHazards].sort((a, b) => {
+      const aNight =
+        nightWindowActive &&
+        (a.category === 'unlit_alley' || a.category === 'unsafe_footbridge')
+          ? -350
+          : 0;
+      const bNight =
+        nightWindowActive &&
+        (b.category === 'unlit_alley' || b.category === 'unsafe_footbridge')
+          ? -350
+          : 0;
+      const distA =
         computeDistanceMeters(
           mapCenter.latitude,
           mapCenter.longitude,
           a.latitude,
           a.longitude,
-        ) -
+        ) + aNight;
+      const distB =
         computeDistanceMeters(
           mapCenter.latitude,
           mapCenter.longitude,
           b.latitude,
           b.longitude,
-        ),
-    )[0];
+        ) + bNight;
+      return distA - distB;
+    })[0];
 
-    // ~0.00162 degrees latitude is ~180 meters Haversine
-    const simLat = Number((target.latitude - 0.00162).toFixed(6));
+    // ~0.00076 degrees latitude is ~85 meters Haversine (inside 100m geofence)
+    const simLat = Number((target.latitude - 0.00076).toFixed(6));
     const simLng = target.longitude;
     setUserLocation({ latitude: simLat, longitude: simLng });
     webViewRef.current?.injectJavaScript(
       `window.updateUserLocation && window.updateUserLocation(${simLat}, ${simLng}); window.focusHazard && window.focusHazard(${target.latitude}, ${target.longitude}); true;`,
     );
     evaluateProximityGeofence(simLat, simLng, hazards, true);
-  }, [userLocation, mapCenter, hazards, evaluateProximityGeofence]);
+  }, [userLocation, mapCenter, hazards, isNighttime, evaluateProximityGeofence]);
 
   const clearSafeRoute = useCallback(() => {
     setRouteOptions([]);
@@ -791,11 +884,22 @@ export default function MapScreen() {
       clearTappedPinOnMap();
       setSelectedHazardId(createdRecord.id);
       setReportModalVisible(false);
+      const queuedOffline = createdRecord.id.startsWith('offline-');
       Alert.alert(
-        locale === 'bn' ? 'রিপোর্ট জমা হয়েছে' : 'Hazard Reported',
-        locale === 'bn'
-          ? 'ধন্যবাদ! আপনার ঝুঁকির রিপোর্ট ম্যাপে যুক্ত হয়েছে।'
-          : 'Thank you! Your hazard report is now visible on the Dhaka safety map.',
+        queuedOffline
+          ? locale === 'bn'
+            ? 'অফলাইনে সংরক্ষিত হয়েছে'
+            : 'Saved Offline'
+          : locale === 'bn'
+            ? 'রিপোর্ট জমা হয়েছে'
+            : 'Hazard Reported',
+        queuedOffline
+          ? locale === 'bn'
+            ? 'ইন্টারনেট ফিরে এলে আপনার রিপোর্ট স্বয়ংক্রিয়ভাবে সিঙ্ক হবে।'
+            : 'No connection detected. Your report is queued locally and will auto-sync when online.'
+          : locale === 'bn'
+            ? 'ধন্যবাদ! আপনার ঝুঁকির রিপোর্ট ম্যাপে যুক্ত হয়েছে।'
+            : 'Thank you! Your hazard report is now visible on the Dhaka safety map.',
       );
     },
     [currentUser, userTrustWeight, clearTappedPinOnMap, locale],
@@ -862,7 +966,7 @@ export default function MapScreen() {
         const nextResolved =
           updated.resolved_count ?? currentResolved + userTrustWeight;
         const nextStatus =
-          updated.status === 'resolved' || nextResolved >= 2
+          updated.status === 'resolved' || nextResolved >= 3
             ? 'resolved'
             : hazard.status;
         setHazards((prev) =>
@@ -883,7 +987,7 @@ export default function MapScreen() {
         }
       } catch {
         const nextResolved = currentResolved + userTrustWeight;
-        const nextStatus = nextResolved >= 2 ? 'resolved' : hazard.status;
+        const nextStatus = nextResolved >= 3 ? 'resolved' : hazard.status;
         setHazards((prev) =>
           prev.map((h) =>
             h.id === hazard.id
@@ -1541,37 +1645,83 @@ export default function MapScreen() {
         </ScrollView>
       </View>
 
-      {/* Dismissible Live Proximity Geofencing Danger Banner */}
+      {/* Dismissible Live Proximity Geofencing Danger HUD Banner (FR-18, FR-19, FR-20, FR-21) */}
       {proximityAlert ? (
-        <TouchableOpacity
-          style={[styles.proximityBanner, { top: topInset + 148 }]}
-          activeOpacity={0.9}
-          onPress={() => {
-            setSelectedHazardId(proximityAlert.hazard.id);
-            webViewRef.current?.injectJavaScript(
-              `window.focusHazard && window.focusHazard(${proximityAlert.hazard.latitude}, ${proximityAlert.hazard.longitude}); true;`,
-            );
-          }}
-        >
-          <View style={styles.proximityBannerContent}>
-            <Text style={styles.proximityBannerTitle} numberOfLines={1}>
-              {locale === 'bn'
-                ? `⚠️ সামনেই উচ্চ ঝুঁকি (${proximityAlert.distanceMeters}m দূরে)!`
-                : `⚠️ High-Risk Hazard ${proximityAlert.distanceMeters}m ahead!`}
-            </Text>
-            <Text style={styles.proximityBannerSub} numberOfLines={1}>
-              {proximityAlert.hazard.landmark_context ||
-                CATEGORY_META[proximityAlert.hazard.category]?.name}
-            </Text>
+        <View style={[styles.proximityBanner, { top: topInset + 148 }]}>
+          <View style={styles.proximityBannerTopRow}>
+            <TouchableOpacity
+              style={styles.proximityBannerContent}
+              activeOpacity={0.85}
+              onPress={() => {
+                setSelectedHazardId(proximityAlert.hazard.id);
+                webViewRef.current?.injectJavaScript(
+                  `window.focusHazard && window.focusHazard(${proximityAlert.hazard.latitude}, ${proximityAlert.hazard.longitude}); true;`,
+                );
+              }}
+            >
+              <Text style={styles.proximityBannerTitle} numberOfLines={1}>
+                {locale === 'bn'
+                  ? `⚠️ সামনেই উচ্চ ঝুঁকি (${proximityAlert.distanceMeters}m দূরে)!`
+                  : `⚠️ High-Risk Hazard ${proximityAlert.distanceMeters}m ahead!`}
+              </Text>
+              <Text style={styles.proximityBannerSub} numberOfLines={1}>
+                {proximityAlert.hazard.landmark_context ||
+                  CATEGORY_META[proximityAlert.hazard.category]?.name}
+              </Text>
+              {proximityAlert.isNightPriority && (
+                <View style={styles.proximityNightBadge}>
+                  <Text style={styles.proximityNightBadgeText}>
+                    {locale === 'bn'
+                      ? '🌙 রাতের অগ্রাধিকার সতর্কতা (৬PM–৬AM)'
+                      : '🌙 Night Priority Alert (6PM–6AM)'}
+                  </Text>
+                </View>
+              )}
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.proximityBannerClose}
+              onPress={() => {
+                Speech.stop();
+                setProximityAlert(null);
+              }}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            >
+              <Text style={styles.proximityBannerCloseText}>✕</Text>
+            </TouchableOpacity>
           </View>
+
           <TouchableOpacity
-            style={styles.proximityBannerClose}
-            onPress={() => setProximityAlert(null)}
-            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            style={styles.proximityDetourBtn}
+            activeOpacity={0.85}
+            disabled={routeLoading}
+            onPress={() => {
+              const h = proximityAlert.hazard;
+              // Compute a safe bypass destination ~350m beyond the hazard along current approach
+              const dLat = h.latitude - userLocation.latitude;
+              const dLng = h.longitude - userLocation.longitude;
+              const mag = Math.sqrt(dLat * dLat + dLng * dLng) || 0.001;
+              const destLat = Number((h.latitude + (dLat / mag) * 0.0032).toFixed(6));
+              const destLng = Number((h.longitude + (dLng / mag) * 0.0032).toFixed(6));
+              const bypassLabel =
+                locale === 'bn'
+                  ? `নিরাপদ বিকল্প (${h.landmark_context || CATEGORY_META[h.category]?.nameBn})`
+                  : `Safe Bypass (${h.landmark_context || CATEGORY_META[h.category]?.name})`;
+              setProximityAlert(null);
+              handleFindSafeRoute(destLat, destLng, bypassLabel);
+            }}
           >
-            <Text style={styles.proximityBannerCloseText}>✕</Text>
+            {routeLoading ? (
+              <ActivityIndicator size="small" color="#06281E" />
+            ) : (
+              <>
+                <MapUiIcon name="git-branch" size={14} color="#06281E" />
+                <Text style={styles.proximityDetourBtnText}>
+                  {locale === 'bn' ? '🛡️ নিরাপদ পথ নিন' : '🛡️ Take Safe Detour'}
+                </Text>
+              </>
+            )}
           </TouchableOpacity>
-        </TouchableOpacity>
+        </View>
       ) : (
         /* Discreet Live Demo Proximity Check Pill */
         <TouchableOpacity
@@ -1594,6 +1744,43 @@ export default function MapScreen() {
           </Text>
         </TouchableOpacity>
       )}
+
+      {/* Subtle Low GPS Accuracy Banner (>50m, NFR-18) */}
+      {gpsAccuracyMeters !== null &&
+        gpsAccuracyMeters > 50 &&
+        !gpsBannerDismissed &&
+        !proximityAlert && (
+          <View
+            style={[
+              styles.lowGpsBanner,
+              {
+                top: topInset + 186,
+                backgroundColor: theme.noticeBg,
+                borderColor: theme.noticeBorder,
+              },
+            ]}
+          >
+            <MapUiIcon name="location" size={14} color={theme.noticeText} />
+            <Text
+              style={[styles.lowGpsBannerText, { color: theme.noticeText }]}
+              numberOfLines={2}
+            >
+              {locale === 'bn'
+                ? `কম GPS নির্ভুলতা (±${Math.round(gpsAccuracyMeters)}মি) — সঠিক পিন বসাতে ম্যাপে ট্যাপ করুন।`
+                : `Low GPS accuracy (±${Math.round(gpsAccuracyMeters)}m) — tap the map manually to place pins accurately.`}
+            </Text>
+            <TouchableOpacity
+              onPress={() => setGpsBannerDismissed(true)}
+              hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+            >
+              <Text
+                style={[styles.lowGpsCloseText, { color: theme.noticeText }]}
+              >
+                ✕
+              </Text>
+            </TouchableOpacity>
+          </View>
+        )}
 
       {/* Layer Status Toast */}
       {layerToast && !proximityAlert && (
