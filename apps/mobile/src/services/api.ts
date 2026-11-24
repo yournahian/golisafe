@@ -3,6 +3,13 @@ import type {
   HazardRecord,
   SafeRouteOption,
 } from '../../../../packages/shared/api-contract';
+import { getDeviceHash } from './deviceHash';
+import {
+  enqueueOfflineReport,
+  flushOfflineQueue,
+  getCachedHazards,
+  saveCachedHazards,
+} from './offlineQueue';
 
 export type { SafeRouteOption };
 
@@ -114,15 +121,22 @@ export async function fetchHazards(): Promise<HazardRecord[]> {
       throw new Error(`HTTP ${response.status}`);
     }
     const data = await response.json();
-    return Array.isArray(data) ? data : [];
+    if (Array.isArray(data)) {
+      await saveCachedHazards(data);
+      // Opportunistically flush any pending offline reports now that API is reachable
+      flushOfflineQueue(API_BASE_URL).catch(() => {});
+      return data;
+    }
+    return await getCachedHazards();
   } catch {
-    return [];
+    return await getCachedHazards();
   }
 }
 
 export async function createHazard(
   payload: CreateHazardPayload,
 ): Promise<HazardRecord> {
+  const deviceHash = await getDeviceHash();
   const bodyPayload: Record<string, unknown> = {
     category: payload.category,
     severity: payload.severity,
@@ -139,19 +153,81 @@ export async function createHazard(
     bodyPayload.reported_by = payload.reported_by;
   }
 
-  const response = await fetch(`${API_BASE_URL}/hazards`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify(bodyPayload),
-  });
+  try {
+    const response = await fetch(`${API_BASE_URL}/hazards`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-device-hash': deviceHash,
+      },
+      body: JSON.stringify(bodyPayload),
+    });
 
-  if (!response.ok) {
-    throw new Error(`Failed to submit hazard: HTTP ${response.status}`);
+    if (response.ok) {
+      return response.json();
+    }
+
+    // Surface backend anti-spam / duplicate / validation rejections (4xx) directly
+    if (response.status >= 400 && response.status < 500) {
+      let message = `Failed to submit hazard: HTTP ${response.status}`;
+      try {
+        const errJson = await response.json();
+        if (typeof errJson?.error === 'string' && errJson.error.trim()) {
+          message = errJson.error;
+        }
+      } catch {
+        // Keep default message
+      }
+      throw new Error(message);
+    }
+
+    // 5xx server error -> queue offline for automatic retry
+    const queued = await enqueueOfflineReport(payload);
+    return {
+      id: queued.id,
+      category: payload.category,
+      severity: payload.severity ?? 'Medium',
+      latitude: payload.latitude,
+      longitude: payload.longitude,
+      landmark_context: payload.landmark_context,
+      sub_tag: payload.sub_tag,
+      image_url: payload.image_url ?? null,
+      reported_by: payload.reported_by ?? null,
+      status: 'pending',
+      confirmations: 1,
+      resolved_count: 0,
+      created_at: queued.queuedAt,
+    };
+  } catch (err) {
+    // Re-throw explicit 4xx validation/rate-limit/duplicate errors
+    if (
+      err instanceof Error &&
+      (err.message.includes('Failed to submit hazard: HTTP 4') ||
+        err.message.toLowerCase().includes('rate limit') ||
+        err.message.toLowerCase().includes('duplicate') ||
+        err.message.toLowerCase().includes('invalid'))
+    ) {
+      throw err;
+    }
+
+    // Network unreachable -> enqueue in offline queue (NFR-20)
+    const queued = await enqueueOfflineReport(payload);
+    return {
+      id: queued.id,
+      category: payload.category,
+      severity: payload.severity ?? 'Medium',
+      latitude: payload.latitude,
+      longitude: payload.longitude,
+      landmark_context: payload.landmark_context,
+      sub_tag: payload.sub_tag,
+      image_url: payload.image_url ?? null,
+      reported_by: payload.reported_by ?? null,
+      status: 'pending',
+      confirmations: 1,
+      resolved_count: 0,
+      created_at: queued.queuedAt,
+    };
   }
-
-  return response.json();
 }
 
 export const submitHazard = createHazard;
@@ -160,12 +236,14 @@ export async function confirmHazard(
   id: string,
   trustWeight: number = 1,
 ): Promise<Hazard> {
+  const deviceHash = await getDeviceHash();
   const response = await fetch(
     `${API_BASE_URL}/hazards/${encodeURIComponent(id)}/confirm`,
     {
       method: 'PATCH',
       headers: {
         'Content-Type': 'application/json',
+        'x-device-hash': deviceHash,
       },
       body: JSON.stringify({ trustWeight }),
     },
@@ -182,6 +260,7 @@ export async function resolveHazard(
   id: string,
   trustWeight: number = 1,
 ): Promise<Hazard> {
+  const deviceHash = await getDeviceHash();
   try {
     const response = await fetch(
       `${API_BASE_URL}/hazards/${encodeURIComponent(id)}/resolve`,
@@ -189,6 +268,7 @@ export async function resolveHazard(
         method: 'PATCH',
         headers: {
           'Content-Type': 'application/json',
+          'x-device-hash': deviceHash,
         },
         body: JSON.stringify({ trustWeight }),
       },
@@ -206,11 +286,18 @@ export async function resolveHazard(
       severity: 'Low',
       latitude: 23.7806,
       longitude: 90.407,
-      status: trustWeight >= 2 ? 'resolved' : 'active',
+      status: trustWeight >= 3 ? 'resolved' : 'active',
       resolved_count: trustWeight,
       created_at: new Date().toISOString(),
     };
   }
+}
+
+export async function syncOfflineReports(): Promise<{
+  synced: HazardRecord[];
+  remaining: number;
+}> {
+  return flushOfflineQueue(API_BASE_URL);
 }
 
 export async function fetchSafeRoutes(
@@ -385,7 +472,10 @@ export async function fetchSafeRoutes(
 
   // Only 1 OSRM route returned: pair with curved safety detour so user can toggle
   const altDetour = buildFallbackArc(startLat, startLng, endLat, endLng, 0.22);
-  const altDist = Math.max(safest.distanceMeters + 90, polylineDistanceMeters(altDetour));
+  const altDist = Math.max(
+    safest.distanceMeters + 90,
+    polylineDistanceMeters(altDetour),
+  );
   const altRisk = scorePolylineRisk(altDetour, activeHazards);
 
   if (altRisk.riskScore <= safest.riskScore) {
@@ -394,7 +484,10 @@ export async function fetchSafeRoutes(
         id: 'safest',
         label: 'Safest Route',
         distanceMeters: altDist,
-        durationSeconds: Math.max(safest.durationSeconds + 60, Math.round(altDist / 1.3)),
+        durationSeconds: Math.max(
+          safest.durationSeconds + 60,
+          Math.round(altDist / 1.3),
+        ),
         riskScore: altRisk.riskScore,
         hazardsNearRoute: altRisk.hazardsNearRoute,
         coordinates: altDetour,
