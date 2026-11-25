@@ -41,6 +41,7 @@ import {
   fetchSafeRoutes,
   resolveHazard,
 } from '../services/api';
+import { subscribeToHazardChanges } from '../services/realtime';
 import {
   CATEGORY_META,
   DARK_THEME,
@@ -382,7 +383,7 @@ export default function MapScreen() {
   const [isNighttime, setIsNighttime] = useState<boolean>(() =>
     isDeviceNightHours(),
   );
-  const [demoMode, setDemoMode] = useState<boolean>(false);
+  const [demoMode, setDemoMode] = useState<boolean>(true);
   const [selectedHazardId, setSelectedHazardId] = useState<string | null>(null);
   const [reportModalVisible, setReportModalVisible] = useState<boolean>(false);
   const [tappedLocation, setTappedLocation] =
@@ -453,6 +454,33 @@ export default function MapScreen() {
   useEffect(() => {
     loadHazards();
   }, [loadHazards]);
+
+  // Architecture Section 2.2: Live Supabase Realtime WebSocket sync (INSERT & UPDATE)
+  useEffect(() => {
+    const unsubscribe = subscribeToHazardChanges((eventType, incoming) => {
+      setHazards((prev) => {
+        const exists = prev.some((h) => h.id === incoming.id);
+        if (eventType === 'INSERT') {
+          if (exists) {
+            return prev.map((h) =>
+              h.id === incoming.id ? { ...h, ...incoming } : h,
+            );
+          }
+          return [incoming, ...prev];
+        }
+        if (exists) {
+          return prev.map((h) =>
+            h.id === incoming.id ? { ...h, ...incoming } : h,
+          );
+        }
+        return [incoming, ...prev];
+      });
+    });
+
+    return () => {
+      unsubscribe();
+    };
+  }, []);
 
   // Configure Android local notification channel
   useEffect(() => {
@@ -907,11 +935,32 @@ export default function MapScreen() {
 
   const handleConfirmHazard = useCallback(
     async (hazard: HazardRecord) => {
+      const distMeters = computeDistanceMeters(
+        userLocation.latitude,
+        userLocation.longitude,
+        hazard.latitude,
+        hazard.longitude,
+      );
+      if (!demoMode && distMeters > 150) {
+        Alert.alert(
+          locale === 'bn' ? '১৫০ মিটারের মধ্যে থাকুন' : '150m Proximity Required',
+          locale === 'bn'
+            ? `ভোট দিতে ঝুঁকির ১৫০ মিটারের মধ্যে থাকতে হবে (বর্তমানে ${distMeters}মি দূরে)। দূর থেকে টেস্ট করতে Layers মেনু থেকে Demo Mode চালু করুন।`
+            : `You must be within 150m of this hazard to vote (currently ${distMeters}m away). Toggle Demo Mode ON in Layers for remote presentation.`,
+        );
+        return;
+      }
+
       setConfirmingId(hazard.id);
       const currentCount =
         hazard.confirmations ?? (hazard.status === 'crowd_verified' ? 3 : 1);
       try {
-        const updated = await confirmHazard(hazard.id, userTrustWeight);
+        const updated = await confirmHazard(hazard.id, {
+          trustWeight: userTrustWeight,
+          userLat: userLocation.latitude,
+          userLng: userLocation.longitude,
+          demoBypass: demoMode,
+        });
         const nextCount =
           updated.confirmations ?? currentCount + userTrustWeight;
         const nextStatus =
@@ -929,17 +978,6 @@ export default function MapScreen() {
               : h,
           ),
         );
-      } catch {
-        const nextCount = currentCount + userTrustWeight;
-        const nextStatus = nextCount >= 3 ? 'crowd_verified' : hazard.status;
-        setHazards((prev) =>
-          prev.map((h) =>
-            h.id === hazard.id
-              ? { ...h, confirmations: nextCount, status: nextStatus }
-              : h,
-          ),
-        );
-      } finally {
         if (currentUser) {
           setCurrentUser((prev) => {
             if (!prev) return prev;
@@ -951,18 +989,62 @@ export default function MapScreen() {
             };
           });
         }
+      } catch (err) {
+        const errMsg = err instanceof Error ? err.message : '';
+        if (
+          errMsg.toLowerCase().includes('150m') ||
+          errMsg.toLowerCase().includes('already voted') ||
+          errMsg.toLowerCase().includes('demo mode')
+        ) {
+          Alert.alert(
+            locale === 'bn' ? 'ভোট সীমাবদ্ধ' : 'Vote Restricted',
+            errMsg,
+          );
+          return;
+        }
+        const nextCount = currentCount + userTrustWeight;
+        const nextStatus = nextCount >= 3 ? 'crowd_verified' : hazard.status;
+        setHazards((prev) =>
+          prev.map((h) =>
+            h.id === hazard.id
+              ? { ...h, confirmations: nextCount, status: nextStatus }
+              : h,
+          ),
+        );
+      } finally {
         setConfirmingId(null);
       }
     },
-    [userTrustWeight, currentUser],
+    [userTrustWeight, currentUser, userLocation, demoMode, locale],
   );
 
   const handleResolveHazard = useCallback(
     async (hazard: HazardRecord) => {
+      const distMeters = computeDistanceMeters(
+        userLocation.latitude,
+        userLocation.longitude,
+        hazard.latitude,
+        hazard.longitude,
+      );
+      if (!demoMode && distMeters > 150) {
+        Alert.alert(
+          locale === 'bn' ? '১৫০ মিটারের মধ্যে থাকুন' : '150m Proximity Required',
+          locale === 'bn'
+            ? `সমাধান নিশ্চিত করতে ঝুঁকির ১৫০ মিটারের মধ্যে থাকতে হবে (বর্তমানে ${distMeters}মি দূরে)। Layers মেনু থেকে Demo Mode চালু করুন।`
+            : `You must be within 150m of this hazard to mark cleared (currently ${distMeters}m away). Toggle Demo Mode ON in Layers for remote presentation.`,
+        );
+        return;
+      }
+
       setResolvingId(hazard.id);
       const currentResolved = hazard.resolved_count ?? 0;
       try {
-        const updated = await resolveHazard(hazard.id, userTrustWeight);
+        const updated = await resolveHazard(hazard.id, {
+          trustWeight: userTrustWeight,
+          userLat: userLocation.latitude,
+          userLng: userLocation.longitude,
+          demoBypass: demoMode,
+        });
         const nextResolved =
           updated.resolved_count ?? currentResolved + userTrustWeight;
         const nextStatus =
@@ -985,7 +1067,19 @@ export default function MapScreen() {
         if (nextStatus === 'resolved') {
           setSelectedHazardId(null);
         }
-      } catch {
+      } catch (err) {
+        const errMsg = err instanceof Error ? err.message : '';
+        if (
+          errMsg.toLowerCase().includes('150m') ||
+          errMsg.toLowerCase().includes('already voted') ||
+          errMsg.toLowerCase().includes('demo mode')
+        ) {
+          Alert.alert(
+            locale === 'bn' ? 'ভোট সীমাবদ্ধ' : 'Vote Restricted',
+            errMsg,
+          );
+          return;
+        }
         const nextResolved = currentResolved + userTrustWeight;
         const nextStatus = nextResolved >= 3 ? 'resolved' : hazard.status;
         setHazards((prev) =>
@@ -1002,7 +1096,7 @@ export default function MapScreen() {
         setResolvingId(null);
       }
     },
-    [userTrustWeight],
+    [userTrustWeight, userLocation, demoMode, locale],
   );
 
   const handleToggleDangerRings = useCallback(() => {
@@ -1200,7 +1294,7 @@ export default function MapScreen() {
           );
           setSelectedHazardId(msg.id);
         } else if (
-          msg?.type === 'mapTap' &&
+          (msg?.type === 'mapTap' || msg?.type === 'PIN_DRAGGED') &&
           typeof msg.latitude === 'number' &&
           typeof msg.longitude === 'number'
         ) {
@@ -2520,19 +2614,54 @@ export default function MapScreen() {
               style={[
                 styles.distanceNoticeBar,
                 {
-                  backgroundColor: theme.noticeBg,
-                  borderColor: theme.noticeBorder,
+                  backgroundColor: demoMode
+                    ? theme.primarySurface
+                    : distMetersFromUser <= 150
+                      ? theme.verifiedBg
+                      : theme.noticeBg,
+                  borderColor: demoMode
+                    ? theme.primary
+                    : distMetersFromUser <= 150
+                      ? theme.verifiedBorder
+                      : theme.noticeBorder,
                 },
               ]}
             >
-              <MapUiIcon name="location" size={14} color={theme.noticeText} />
+              <MapUiIcon
+                name="location"
+                size={14}
+                color={
+                  demoMode
+                    ? theme.primaryText
+                    : distMetersFromUser <= 150
+                      ? theme.verifiedText
+                      : theme.noticeText
+                }
+              />
               <Text
-                style={[styles.distanceNoticeText, { color: theme.noticeText }]}
+                style={[
+                  styles.distanceNoticeText,
+                  {
+                    color: demoMode
+                      ? theme.primaryText
+                      : distMetersFromUser <= 150
+                        ? theme.verifiedText
+                        : theme.noticeText,
+                  },
+                ]}
                 numberOfLines={1}
               >
-                {isUserTrusted
-                  ? `🛡️ Trusted 2x vote weight active (${distLabel} ${t.actions.away})`
-                  : `Community verification active (${distLabel} ${t.actions.away})`}
+                {demoMode
+                  ? locale === 'bn'
+                    ? `🧪 ডেমো বাইপাস সক্রিয় (${distLabel} দূরে)${isUserTrusted ? ' · 2x' : ''}`
+                    : `🧪 Demo Bypass Active (${distLabel} ${t.actions.away})${isUserTrusted ? ' · 2x' : ''}`
+                  : distMetersFromUser <= 150
+                    ? locale === 'bn'
+                      ? `✅ ১৫০ মিটারের মধ্যে (${distLabel}) — ভোট চালু`
+                      : `✅ Within 150m (${distLabel}) — Voting unlocked`
+                    : locale === 'bn'
+                      ? `🔒 ভোট দিতে ১৫০মি এর মধ্যে থাকুন (${distLabel} দূরে)`
+                      : `🔒 Move within 150m to vote (${distLabel} ${t.actions.away})`}
               </Text>
             </View>
 
@@ -2583,6 +2712,7 @@ export default function MapScreen() {
                   {
                     backgroundColor: theme.verifiedBg,
                     borderColor: theme.verifiedBorder,
+                    opacity: !demoMode && distMetersFromUser > 150 ? 0.48 : 1,
                   },
                 ]}
                 onPress={() => handleConfirmHazard(selectedHazard)}
@@ -2610,6 +2740,7 @@ export default function MapScreen() {
                   {
                     backgroundColor: theme.surfaceElevated,
                     borderColor: theme.borderStrong,
+                    opacity: !demoMode && distMetersFromUser > 150 ? 0.48 : 1,
                   },
                 ]}
                 onPress={() => handleResolveHazard(selectedHazard)}

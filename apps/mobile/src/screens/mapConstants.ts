@@ -30,6 +30,71 @@ export const DHAKA_STREETS: Array<{
   { label: 'Jatrabari Flyover Entry', latitude: 23.7104, longitude: 90.4348 },
 ];
 
+export interface CrossingSafetyMarker {
+  id: string;
+  name: string;
+  type: 'zebra_crossing' | 'footbridge';
+  status: 'safe' | 'unsafe';
+  badgeLabel: 'Safe Crossing' | 'Unsafe Footbridge';
+  latitude: number;
+  longitude: number;
+  note: string;
+}
+
+// FR-17: Key Dhaka intersection footbridge vs zebra crossing safety indicators
+export const DHAKA_CROSSINGS: CrossingSafetyMarker[] = [
+  {
+    id: 'crossing-farmgate-zebra',
+    name: 'Farmgate East Zebra Crossing',
+    type: 'zebra_crossing',
+    status: 'safe',
+    badgeLabel: 'Safe Crossing',
+    latitude: 23.7568,
+    longitude: 90.3895,
+    note: 'Signalized zebra crossing — safer alternative to unlit footbridge',
+  },
+  {
+    id: 'crossing-shahbagh-zebra',
+    name: 'Shahbagh Intersection Zebra Crossing',
+    type: 'zebra_crossing',
+    status: 'safe',
+    badgeLabel: 'Safe Crossing',
+    latitude: 23.7385,
+    longitude: 90.3955,
+    note: 'Police-monitored pedestrian crossing with bright street lighting',
+  },
+  {
+    id: 'crossing-sciencelab-bridge',
+    name: 'Science Lab Lit Footbridge',
+    type: 'footbridge',
+    status: 'safe',
+    badgeLabel: 'Safe Crossing',
+    latitude: 23.7393,
+    longitude: 90.3834,
+    note: 'LED-lit footbridge with active pedestrian flow and CCTV',
+  },
+  {
+    id: 'crossing-banani-zebra',
+    name: 'Banani Road 11 Zebra Crossing',
+    type: 'zebra_crossing',
+    status: 'safe',
+    badgeLabel: 'Safe Crossing',
+    latitude: 23.7932,
+    longitude: 90.4063,
+    note: 'Traffic-controlled surface crossing near Kakoli',
+  },
+  {
+    id: 'crossing-newmarket-bridge',
+    name: 'New Market Footbridge',
+    type: 'footbridge',
+    status: 'unsafe',
+    badgeLabel: 'Unsafe Footbridge',
+    latitude: 23.7336,
+    longitude: 90.3842,
+    note: 'Hawker congestion and dim stairwell lighting after 8 PM',
+  },
+];
+
 export const DHAKA_SEED_HAZARDS: HazardRecord[] = [
   {
     id: 'seed-banani-crossing',

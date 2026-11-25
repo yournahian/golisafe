@@ -13,6 +13,7 @@ import {
 } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import { Audio } from 'expo-av';
+import { LightSensor } from 'expo-sensors';
 import { Ionicons } from '@expo/vector-icons';
 import {
   HazardCategory,
@@ -124,6 +125,10 @@ export const QuickReportModal: React.FC<QuickReportModalProps> = ({
   const [aiDraft, setAiDraft] = useState<AiClassificationResult | null>(null);
   const [aiTimeoutNotice, setAiTimeoutNotice] = useState<string | null>(null);
 
+  // FR-09 Ambient Light Sensor (Lux) for unlit_alley
+  const [sensorAvailable, setSensorAvailable] = useState<boolean | null>(null);
+  const [luxReading, setLuxReading] = useState<number | null>(null);
+
   const effectiveInitial = initialCoords ?? currentLocation;
   const [latitude, setLatitude] = useState<number>(effectiveInitial.latitude);
   const [longitude, setLongitude] = useState<number>(effectiveInitial.longitude);
@@ -167,6 +172,43 @@ export const QuickReportModal: React.FC<QuickReportModalProps> = ({
       if (interval) clearInterval(interval);
     };
   }, [isRecording]);
+
+  // FR-09 & Sec 2.6: Ambient Light Sensor (Lux) listener with manual darkness fallback
+  useEffect(() => {
+    let subscription: { remove: () => void } | null = null;
+    let isMounted = true;
+
+    if (visible && selectedCategory === 'unlit_alley') {
+      LightSensor.isAvailableAsync()
+        .then((available) => {
+          if (!isMounted) return;
+          setSensorAvailable(available);
+          if (available) {
+            LightSensor.setUpdateInterval(500);
+            subscription = LightSensor.addListener((data) => {
+              if (isMounted && data && typeof data.illuminance === 'number') {
+                setLuxReading(Math.round(data.illuminance));
+              }
+            });
+          }
+        })
+        .catch(() => {
+          if (isMounted) {
+            setSensorAvailable(false);
+          }
+        });
+    } else {
+      setLuxReading(null);
+      setSensorAvailable(null);
+    }
+
+    return () => {
+      isMounted = false;
+      if (subscription) {
+        subscription.remove();
+      }
+    };
+  }, [visible, selectedCategory]);
 
   const isPinDropped = Boolean(initialCoords);
 
@@ -385,13 +427,31 @@ export const QuickReportModal: React.FC<QuickReportModalProps> = ({
         }
       }
 
+      let finalSubTag = selectedCategory === 'unsafe_footbridge' ? selectedSubtag : undefined;
+      let finalLandmark = landmarkContext.trim() || undefined;
+
+      // FR-09 Street Illumination (Lux) Context Integration
+      if (selectedCategory === 'unlit_alley') {
+        if (sensorAvailable === true && luxReading !== null) {
+          finalSubTag = `${luxReading} lux (${luxReading < 15 ? 'Dark Alley Confirmed' : 'Well-Lit'})`;
+          const luxNotice = `[Ambient Light: ${luxReading} lux — ${
+            luxReading < 15 ? 'Dark Alley Confirmed' : 'Well-Lit'
+          }]`;
+          finalLandmark = finalLandmark ? `${finalLandmark} ${luxNotice}` : luxNotice;
+        } else if (sensorAvailable === false) {
+          finalSubTag = 'Manual Darkness Mode';
+          const fallbackNotice = '[Street Illumination: Manual Darkness Mode (Sensor unavailable)]';
+          finalLandmark = finalLandmark ? `${finalLandmark} ${fallbackNotice}` : fallbackNotice;
+        }
+      }
+
       await onSubmitHazard({
         category: selectedCategory,
         severity: selectedSeverity,
         latitude,
         longitude,
-        landmark_context: landmarkContext.trim() || undefined,
-        sub_tag: selectedCategory === 'unsafe_footbridge' ? selectedSubtag : undefined,
+        landmark_context: finalLandmark,
+        sub_tag: finalSubTag,
         imageUri: finalPhotoUrl || undefined,
         image_url: finalPhotoUrl || undefined,
       });
@@ -403,6 +463,8 @@ export const QuickReportModal: React.FC<QuickReportModalProps> = ({
       setImageUri(null);
       setAiDraft(null);
       setAiTimeoutNotice(null);
+      setLuxReading(null);
+      setSensorAvailable(null);
       onClose();
     } catch (error) {
       Alert.alert(
@@ -665,6 +727,128 @@ export const QuickReportModal: React.FC<QuickReportModalProps> = ({
                     );
                   })}
                 </View>
+              </View>
+            )}
+
+            {/* Street Illumination (Lux) Meter (SRS FR-09 & Section 2.6 fallback) */}
+            {selectedCategory === 'unlit_alley' && (
+              <View style={styles.section}>
+                <View style={styles.sectionLabelRow}>
+                  <Text style={styles.sectionLabel}>
+                    {language === 'bn'
+                      ? 'রাস্তার আলো পরিমাপক (Lux সেন্সর - FR-09)'
+                      : 'Street Illumination Meter (FR-09)'}
+                  </Text>
+                  {sensorAvailable === true && luxReading !== null && (
+                    <View
+                      style={[
+                        styles.luxStatusBadge,
+                        luxReading < 15 ? styles.luxBadgeDark : styles.luxBadgeLit,
+                      ]}
+                    >
+                      <View
+                        style={[
+                          styles.luxStatusDot,
+                          { backgroundColor: luxReading < 15 ? '#C084FC' : '#4ADE80' },
+                        ]}
+                      />
+                      <Text
+                        style={[
+                          styles.luxStatusBadgeText,
+                          { color: luxReading < 15 ? '#E9D5FF' : '#DCFCE7' },
+                        ]}
+                      >
+                        {luxReading < 15
+                          ? language === 'bn'
+                            ? 'অন্ধকার গলি নিশ্চিত'
+                            : 'Dark Alley Confirmed'
+                          : language === 'bn'
+                          ? 'আলোকিত রাস্তা'
+                          : 'Well-Lit Street'}
+                      </Text>
+                    </View>
+                  )}
+                </View>
+
+                {sensorAvailable === true && luxReading !== null ? (
+                  <View
+                    style={[
+                      styles.luxMeterCard,
+                      luxReading < 15 ? styles.luxMeterCardDark : styles.luxMeterCardLit,
+                    ]}
+                  >
+                    <View style={styles.luxMeterHeader}>
+                      <View style={styles.luxIconWrap}>
+                        <Ionicons
+                          name={luxReading < 15 ? 'moon' : 'sunny'}
+                          size={20}
+                          color={luxReading < 15 ? '#C084FC' : '#FBBF24'}
+                        />
+                      </View>
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.luxMeterTitle}>
+                          {language === 'bn'
+                            ? `পরিবেষ্টিত আলো: ${luxReading} lux`
+                            : `Ambient Light: ${luxReading} lux — ${
+                                luxReading < 15 ? 'Dark Alley Confirmed' : 'Well-Lit'
+                              }`}
+                        </Text>
+                        <Text style={styles.luxMeterSubtext}>
+                          {luxReading < 15
+                            ? language === 'bn'
+                              ? '১৫ লাক্সের নিচে আলো শনাক্ত — রাতের নিরাপদ নেভিগেশনের জন্য অগ্রাধিকার পাবে।'
+                              : 'Threshold met (< 15 lux). Flagged for nighttime navigation priority.'
+                            : language === 'bn'
+                            ? 'পর্যাপ্ত আলোকসজ্জা রয়েছে (১৫ লাক্স বা তার বেশি)।'
+                            : 'Adequate street lighting detected (>= 15 lux).'}
+                        </Text>
+                      </View>
+                    </View>
+
+                    {/* Visual Meter Bar */}
+                    <View style={styles.luxBarTrack}>
+                      <View
+                        style={[
+                          styles.luxBarFill,
+                          {
+                            width: `${Math.min(100, Math.max(8, (luxReading / 50) * 100))}%`,
+                            backgroundColor: luxReading < 15 ? '#A855F7' : '#10B981',
+                          },
+                        ]}
+                      />
+                    </View>
+                    <View style={styles.luxBarScaleRow}>
+                      <Text style={styles.luxBarScaleText}>0 lux (Pitch Black)</Text>
+                      <Text style={styles.luxBarScaleThreshold}>15 lux Threshold</Text>
+                      <Text style={styles.luxBarScaleText}>50+ lux (Bright)</Text>
+                    </View>
+                  </View>
+                ) : sensorAvailable === false ? (
+                  <View style={styles.luxFallbackCard}>
+                    <Ionicons name="information-circle-outline" size={18} color="#F59E0B" />
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.luxFallbackTitle}>
+                        {language === 'bn'
+                          ? 'ম্যানুয়াল ডার্কনেস মোড (সেন্সর অনুপলব্ধ)'
+                          : 'Manual Darkness Mode (Sensor unavailable)'}
+                      </Text>
+                      <Text style={styles.luxFallbackSubtext}>
+                        {language === 'bn'
+                          ? 'ডিভাইসে অ্যাম্বিয়েন্ট লাইট সেন্সর কাজ করছে না। ম্যানুয়াল সাবমিশন প্রযোজ্য।'
+                          : 'Hardware light sensor is not supported or permission denied. Proceeding with manual hazard reporting.'}
+                      </Text>
+                    </View>
+                  </View>
+                ) : (
+                  <View style={styles.luxLoadingCard}>
+                    <ActivityIndicator size="small" color="#A855F7" />
+                    <Text style={styles.luxLoadingText}>
+                      {language === 'bn'
+                        ? 'আলোর মাত্রা পরিমাপ করা হচ্ছে…'
+                        : 'Calibrating ambient light sensor (lux)…'}
+                    </Text>
+                  </View>
+                )}
               </View>
             )}
 
@@ -1259,6 +1443,133 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '700',
     color: '#FFFFFF',
+  },
+  luxStatusBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 8,
+    gap: 5,
+  },
+  luxBadgeDark: {
+    backgroundColor: 'rgba(168, 85, 247, 0.18)',
+    borderWidth: 1,
+    borderColor: 'rgba(168, 85, 247, 0.4)',
+  },
+  luxBadgeLit: {
+    backgroundColor: 'rgba(16, 185, 129, 0.18)',
+    borderWidth: 1,
+    borderColor: 'rgba(16, 185, 129, 0.4)',
+  },
+  luxStatusDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+  },
+  luxStatusBadgeText: {
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  luxMeterCard: {
+    borderRadius: 12,
+    padding: 12,
+    borderWidth: 1,
+  },
+  luxMeterCardDark: {
+    backgroundColor: 'rgba(168, 85, 247, 0.08)',
+    borderColor: 'rgba(168, 85, 247, 0.3)',
+  },
+  luxMeterCardLit: {
+    backgroundColor: 'rgba(16, 185, 129, 0.08)',
+    borderColor: 'rgba(16, 185, 129, 0.3)',
+  },
+  luxMeterHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginBottom: 10,
+  },
+  luxIconWrap: {
+    width: 36,
+    height: 36,
+    borderRadius: 9,
+    backgroundColor: '#1E293B',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  luxMeterTitle: {
+    color: '#F8FAFC',
+    fontSize: 13,
+    fontWeight: '700',
+    marginBottom: 2,
+  },
+  luxMeterSubtext: {
+    color: '#94A3B8',
+    fontSize: 11,
+    lineHeight: 15,
+  },
+  luxBarTrack: {
+    height: 8,
+    backgroundColor: '#0F172A',
+    borderRadius: 4,
+    overflow: 'hidden',
+    marginTop: 2,
+    marginBottom: 6,
+  },
+  luxBarFill: {
+    height: '100%',
+    borderRadius: 4,
+  },
+  luxBarScaleRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  luxBarScaleText: {
+    fontSize: 10,
+    color: '#64748B',
+  },
+  luxBarScaleThreshold: {
+    fontSize: 10,
+    fontWeight: '600',
+    color: '#C084FC',
+  },
+  luxFallbackCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    backgroundColor: 'rgba(245, 158, 11, 0.1)',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(245, 158, 11, 0.25)',
+    padding: 12,
+  },
+  luxFallbackTitle: {
+    color: '#FCD34D',
+    fontSize: 12.5,
+    fontWeight: '600',
+    marginBottom: 2,
+  },
+  luxFallbackSubtext: {
+    color: '#CBD5E1',
+    fontSize: 11,
+    lineHeight: 14,
+  },
+  luxLoadingCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    backgroundColor: '#1E293B',
+    borderRadius: 12,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: '#263554',
+  },
+  luxLoadingText: {
+    color: '#94A3B8',
+    fontSize: 12,
   },
 });
 
