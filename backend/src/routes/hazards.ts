@@ -557,6 +557,10 @@ export interface HazardHistoryEntry {
 }
 export const inMemoryHazardHistory: HazardHistoryEntry[] = [];
 
+function toDbVoteType(voteType: 'confirm' | 'resolve'): 'still_there' | 'resolved' {
+  return voteType === 'confirm' ? 'still_there' : 'resolved';
+}
+
 /**
  * Independent Vote Guard (FR-22, FR-23)
  * Tracks (hazard_id, device_hash, vote_type) in Supabase verification_votes
@@ -568,7 +572,8 @@ async function hasDeviceVoted(
   deviceHash: string,
   voteType: 'confirm' | 'resolve'
 ): Promise<boolean> {
-  const voteKey = `${hazardId}:${deviceHash}:${voteType}`;
+  const dbVoteType = toDbVoteType(voteType);
+  const voteKey = `${hazardId}:${deviceHash}:${dbVoteType}`;
   if (inMemoryVotes.has(voteKey)) {
     return true;
   }
@@ -580,7 +585,7 @@ async function hasDeviceVoted(
         .select('id')
         .eq('hazard_id', hazardId)
         .eq('device_hash', deviceHash)
-        .eq('vote_type', voteType)
+        .eq('vote_type', dbVoteType)
         .maybeSingle();
 
       if (!error && data) {
@@ -604,7 +609,8 @@ async function recordDeviceVote(
   deviceHash: string,
   voteType: 'confirm' | 'resolve'
 ): Promise<void> {
-  const voteKey = `${hazardId}:${deviceHash}:${voteType}`;
+  const dbVoteType = toDbVoteType(voteType);
+  const voteKey = `${hazardId}:${deviceHash}:${dbVoteType}`;
   inMemoryVotes.add(voteKey);
 
   if (supabase) {
@@ -612,8 +618,7 @@ async function recordDeviceVote(
       await supabase.from('verification_votes').insert({
         hazard_id: hazardId,
         device_hash: deviceHash,
-        vote_type: voteType,
-        created_at: new Date().toISOString(),
+        vote_type: dbVoteType,
       });
     } catch {
       // Ignore if table unavailable
@@ -651,8 +656,6 @@ async function logHazardHistory(
         hazard_id: hazardId,
         previous_status: previousStatus,
         new_status: newStatus,
-        changed_by: deviceHash || null,
-        created_at: entry.created_at,
       });
     } catch {
       // Wrapped in try/catch so it never blocks the response
@@ -1114,16 +1117,57 @@ router.post('/:id/resolve', handleResolveHazard);
  * Lazy TTL filtering: Excludes expired temporary hazards; structural hazards persist.
  */
 router.get('/', async (req: Request, res: Response) => {
-  const { severity, verified } = req.query;
+  const { severity, verified, lat, lng, radius } = req.query;
   const normalizedSeverity = normalizeSeverity(
     typeof severity === 'string' ? severity : undefined
   );
   const isVerifiedOnly =
     typeof verified === 'string' && verified.trim().toLowerCase() === 'true';
 
+  const latNum =
+    typeof lat === 'string' && lat.trim() !== '' ? Number(lat) : NaN;
+  const lngNum =
+    typeof lng === 'string' && lng.trim() !== '' ? Number(lng) : NaN;
+  const radiusNum =
+    typeof radius === 'string' && radius.trim() !== '' && Number(radius) > 0
+      ? Math.round(Number(radius))
+      : 2000;
+  const hasSpatialParams =
+    !isNaN(latNum) && isFinite(latNum) && !isNaN(lngNum) && isFinite(lngNum);
+
   try {
     const supabase = getSupabaseClient();
     if (supabase) {
+      // NFR-15: Use PostGIS 2km spatial RPC when lat & lng query params are provided
+      if (hasSpatialParams) {
+        try {
+          const rpcResult: any = await supabase.rpc('get_nearby_hazards', {
+            user_lat: latNum,
+            user_lng: lngNum,
+            radius_meters: radiusNum,
+          });
+          if (!rpcResult.error && Array.isArray(rpcResult.data)) {
+            let nearby = filterActiveAndUnexpired(rpcResult.data as HazardRecord[]);
+            if (isVerifiedOnly) {
+              nearby = nearby.filter((h) => h.status === 'crowd_verified');
+            }
+            if (normalizedSeverity) {
+              nearby = nearby.filter(
+                (h) => h.severity.toLowerCase() === normalizedSeverity.toLowerCase()
+              );
+            }
+            const mapped = nearby.map((h) => ({
+              ...h,
+              confirmations: h.confirmations ?? 1,
+              resolved_count: h.resolved_count ?? 0,
+            }));
+            return res.status(200).json(mapped);
+          }
+        } catch {
+          // Fall back to standard query below if RPC fails or is unavailable
+        }
+      }
+
       for (const columns of [
         EXTENDED_COLUMNS,
         FULL_COLUMNS,
@@ -1302,6 +1346,38 @@ router.post('/', async (req: Request, res: Response) => {
           .single();
 
         if (!result.error && result.data) {
+          // Best-effort persistence into device_tokens & report_media (never blocks response)
+          try {
+            const { data: existingToken } = await supabase
+              .from('device_tokens')
+              .select('report_count')
+              .eq('token_hash', deviceToken)
+              .maybeSingle();
+            const nextTokenCount = ((existingToken as any)?.report_count ?? 0) + 1;
+            await supabase.from('device_tokens').upsert(
+              {
+                token_hash: deviceToken,
+                report_count: nextTokenCount,
+                last_report_at: new Date().toISOString(),
+              },
+              { onConflict: 'token_hash' }
+            );
+          } catch {
+            // Non-fatal if device_tokens table unavailable
+          }
+
+          if (image_url && typeof image_url === 'string' && image_url.trim()) {
+            try {
+              await supabase.from('report_media').insert({
+                hazard_id: result.data.id,
+                media_type: 'photo',
+                storage_url: image_url.trim(),
+              });
+            } catch {
+              // Non-fatal if report_media table unavailable
+            }
+          }
+
           return res.status(201).json({
             ...result.data,
             confirmations: result.data.confirmations ?? 1,

@@ -13,9 +13,17 @@
       "supportsTablet": true
     },
     "android": {
+      "package": "com.golisafe.app",
       "adaptiveIcon": {
         "backgroundColor": "#0F172A"
-      }
+      },
+      "permissions": [
+        "ACCESS_COARSE_LOCATION",
+        "ACCESS_FINE_LOCATION",
+        "CAMERA",
+        "RECORD_AUDIO",
+        "POST_NOTIFICATIONS"
+      ]
     },
     "plugins": [
       "expo-asset",
