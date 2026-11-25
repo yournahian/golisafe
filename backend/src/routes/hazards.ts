@@ -544,10 +544,164 @@ export const DEFAULT_MOCK_HAZARDS: HazardRecord[] = [
 
 export let mockHazards: HazardRecord[] = [...DEFAULT_MOCK_HAZARDS];
 
-function confirmMockHazard(hazardId: string, res: Response, trustWeight = 1) {
+// In-memory set for vote tracking fallback: `${hazardId}:${deviceHash}:${voteType}`
+export const inMemoryVotes = new Set<string>();
+
+// In-memory array for hazard history logging fallback
+export interface HazardHistoryEntry {
+  hazard_id: string;
+  previous_status: string;
+  new_status: string;
+  changed_by?: string;
+  created_at: string;
+}
+export const inMemoryHazardHistory: HazardHistoryEntry[] = [];
+
+/**
+ * Independent Vote Guard (FR-22, FR-23)
+ * Tracks (hazard_id, device_hash, vote_type) in Supabase verification_votes
+ * with fallback to in-memory set to prevent duplicate voting.
+ */
+async function hasDeviceVoted(
+  supabase: SupabaseClient | null,
+  hazardId: string,
+  deviceHash: string,
+  voteType: 'confirm' | 'resolve'
+): Promise<boolean> {
+  const voteKey = `${hazardId}:${deviceHash}:${voteType}`;
+  if (inMemoryVotes.has(voteKey)) {
+    return true;
+  }
+
+  if (supabase) {
+    try {
+      const { data, error } = await supabase
+        .from('verification_votes')
+        .select('id')
+        .eq('hazard_id', hazardId)
+        .eq('device_hash', deviceHash)
+        .eq('vote_type', voteType)
+        .maybeSingle();
+
+      if (!error && data) {
+        inMemoryVotes.add(voteKey);
+        return true;
+      }
+    } catch {
+      // In-memory fallback if table unavailable
+    }
+  }
+
+  return false;
+}
+
+/**
+ * Records a vote in verification_votes (Supabase + in-memory fallback).
+ */
+async function recordDeviceVote(
+  supabase: SupabaseClient | null,
+  hazardId: string,
+  deviceHash: string,
+  voteType: 'confirm' | 'resolve'
+): Promise<void> {
+  const voteKey = `${hazardId}:${deviceHash}:${voteType}`;
+  inMemoryVotes.add(voteKey);
+
+  if (supabase) {
+    try {
+      await supabase.from('verification_votes').insert({
+        hazard_id: hazardId,
+        device_hash: deviceHash,
+        vote_type: voteType,
+        created_at: new Date().toISOString(),
+      });
+    } catch {
+      // Ignore if table unavailable
+    }
+  }
+}
+
+/**
+ * Hazard History Logging:
+ * Whenever a hazard's status changes (e.g. active -> crowd_verified or resolved),
+ * insert an audit record into hazard_history (wrapped in try/catch so it never blocks the response).
+ */
+async function logHazardHistory(
+  supabase: SupabaseClient | null,
+  hazardId: string,
+  previousStatus: string,
+  newStatus: string,
+  deviceHash?: string
+): Promise<void> {
+  if (previousStatus === newStatus) return;
+
+  const entry: HazardHistoryEntry = {
+    hazard_id: hazardId,
+    previous_status: previousStatus,
+    new_status: newStatus,
+    changed_by: deviceHash || 'anonymous-device',
+    created_at: new Date().toISOString(),
+  };
+
+  inMemoryHazardHistory.push(entry);
+
+  if (supabase) {
+    try {
+      await supabase.from('hazard_history').insert({
+        hazard_id: hazardId,
+        previous_status: previousStatus,
+        new_status: newStatus,
+        changed_by: deviceHash || null,
+        created_at: entry.created_at,
+      });
+    } catch {
+      // Wrapped in try/catch so it never blocks the response
+    }
+  }
+}
+
+/**
+ * Fetches hazard record for voting, checking Supabase first and falling back to in-memory mocks.
+ */
+async function getHazardRecordForVote(
+  supabase: SupabaseClient | null,
+  hazardId: string
+): Promise<{
+  data: any | null;
+  error?: any;
+  hasConfirmationsColumn?: boolean;
+  hasResolvedCountColumn?: boolean;
+}> {
+  if (supabase) {
+    try {
+      const fetched = await fetchHazardById(supabase, hazardId);
+      if (!fetched.error && fetched.data) {
+        return {
+          data: fetched.data,
+          hasConfirmationsColumn: fetched.hasConfirmationsColumn,
+          hasResolvedCountColumn: fetched.hasResolvedCountColumn,
+        };
+      }
+      if (fetched.error && fetched.error.code !== '22P02') {
+        const mockMatch = mockHazards.find((h) => h.id === hazardId);
+        if (mockMatch) {
+          return { data: mockMatch };
+        }
+        return { data: null, error: fetched.error };
+      }
+    } catch {
+      // Fall through to mock search
+    }
+  }
+
+  const mockMatch = mockHazards.find((h) => h.id === hazardId);
+  return { data: mockMatch || null };
+}
+
+function confirmMockHazard(hazardId: string, trustWeight = 1): HazardRecord | null {
   const index = mockHazards.findIndex((h) => h.id === hazardId);
   if (index === -1) {
-    return res.status(404).json({ error: 'Hazard not found' });
+    return null;
   }
 
   const existing = mockHazards[index];
@@ -559,17 +713,16 @@ function confirmMockHazard(hazardId: string, res: Response, trustWeight = 1) {
   };
 
   mockHazards[index] = updatedHazard;
-  return res.status(200).json(updatedHazard);
+  return updatedHazard;
 }
 
 function resolveMockHazard(
   hazardId: string,
-  res: Response,
   existingRecord?: any,
   nextResolvedCount?: number,
   nextStatus?: 'active' | 'crowd_verified' | 'resolved',
   trustWeight = 1
-) {
+): HazardRecord | null {
   const index = mockHazards.findIndex((h) => h.id === hazardId);
   if (index !== -1) {
     const existing = mockHazards[index];
@@ -582,7 +735,7 @@ function resolveMockHazard(
       status,
     };
     mockHazards[index] = updatedHazard;
-    return res.status(200).json(updatedHazard);
+    return updatedHazard;
   }
 
   if (existingRecord) {
@@ -596,10 +749,10 @@ function resolveMockHazard(
       status,
     };
     mockHazards.unshift(updatedHazard);
-    return res.status(200).json(updatedHazard);
+    return updatedHazard;
   }
 
-  return res.status(404).json({ error: 'Hazard not found' });
+  return null;
 }
 
 const handleConfirmHazard = async (req: Request, res: Response) => {
@@ -611,7 +764,15 @@ const handleConfirmHazard = async (req: Request, res: Response) => {
     }
 
     const hazardId = id.trim();
-    const rawWeight = req.body?.trustWeight;
+    const { userLat, userLng, demoBypass, trustWeight: rawWeight } = req.body || {};
+    const isDemoBypass = demoBypass === true;
+
+    const rawDeviceHash = req.headers['x-device-hash'];
+    const deviceHash =
+      typeof rawDeviceHash === 'string' && rawDeviceHash.trim()
+        ? rawDeviceHash.trim()
+        : (req.ip as string) || req.socket?.remoteAddress || 'anonymous-device';
+
     const trustWeight =
       typeof rawWeight === 'number' && !isNaN(rawWeight) && rawWeight > 0
         ? Math.round(rawWeight)
@@ -619,32 +780,82 @@ const handleConfirmHazard = async (req: Request, res: Response) => {
 
     const supabase = getSupabaseClient();
 
-    if (supabase) {
+    // 1. Fetch hazard to verify existence and get coordinates & current status
+    const recordResult = await getHazardRecordForVote(supabase, hazardId);
+    if (recordResult.error && !recordResult.data) {
+      return res.status(500).json({ error: recordResult.error.message });
+    }
+    if (!recordResult.data) {
+      return res.status(404).json({ error: 'Hazard not found' });
+    }
+
+    const existingRecord = recordResult.data;
+
+    // 2. 150m Proximity Check (FR-22)
+    const userLatNum =
+      typeof userLat === 'number'
+        ? userLat
+        : typeof userLat === 'string' && userLat.trim() !== ''
+        ? Number(userLat)
+        : NaN;
+
+    const userLngNum =
+      typeof userLng === 'number'
+        ? userLng
+        : typeof userLng === 'string' && userLng.trim() !== ''
+        ? Number(userLng)
+        : NaN;
+
+    const hasUserCoords =
+      !isNaN(userLatNum) &&
+      isFinite(userLatNum) &&
+      !isNaN(userLngNum) &&
+      isFinite(userLngNum);
+
+    if (hasUserCoords && !isDemoBypass) {
+      const distance = haversineDistanceMeters(
+        userLatNum,
+        userLngNum,
+        existingRecord.latitude,
+        existingRecord.longitude
+      );
+      if (distance > 150) {
+        return res.status(403).json({
+          error:
+            'You must be within 150m of the hazard to vote (enable Demo Mode for remote testing).',
+        });
+      }
+    }
+
+    // 3. Independent Vote Guard (FR-22, FR-23)
+    if (!isDemoBypass) {
+      const alreadyVoted = await hasDeviceVoted(
+        supabase,
+        hazardId,
+        deviceHash,
+        'confirm'
+      );
+      if (alreadyVoted) {
+        return res.status(409).json({
+          error: 'You have already voted on this hazard.',
+        });
+      }
+    }
+
+    const oldStatus: string = existingRecord.status;
+    const newConfirmations = (existingRecord.confirmations || 1) + trustWeight;
+    const shouldVerify = newConfirmations >= 3;
+    const nextStatus: HazardRecord['status'] = shouldVerify
+      ? 'crowd_verified'
+      : (existingRecord.status as HazardRecord['status']);
+
+    // 4. Update in Supabase or in-memory mock
+    if (
+      supabase &&
+      typeof existingRecord.id === 'string' &&
+      !existingRecord.id.startsWith('d0000000-')
+    ) {
       try {
-        const fetched = await fetchHazardById(supabase, hazardId);
-
-        if (fetched.error) {
-          if (fetched.error.code === '22P02') {
-            return confirmMockHazard(hazardId, res, trustWeight);
-          }
-          const mockMatch = mockHazards.find((h) => h.id === hazardId);
-          if (mockMatch) {
-            return confirmMockHazard(hazardId, res, trustWeight);
-          }
-          return res.status(500).json({ error: fetched.error.message });
-        }
-
-        const existingRecord = fetched.data;
-        if (!existingRecord) {
-          const mockMatch = mockHazards.find((h) => h.id === hazardId);
-          if (mockMatch) {
-            return confirmMockHazard(hazardId, res, trustWeight);
-          }
-          return res.status(404).json({ error: 'Hazard not found' });
-        }
-
-        const newConfirmations = (existingRecord.confirmations || 1) + trustWeight;
-        const shouldVerify = newConfirmations >= 3;
         const statusOnlyPayload: Record<string, any> = shouldVerify
           ? { status: 'crowd_verified' }
           : {};
@@ -658,34 +869,50 @@ const handleConfirmHazard = async (req: Request, res: Response) => {
           hazardId,
           primaryPayload,
           statusOnlyPayload,
-          fetched.hasConfirmationsColumn,
+          recordResult.hasConfirmationsColumn ?? true,
           existingRecord,
           {
             confirmations: newConfirmations,
             resolved_count: existingRecord.resolved_count ?? 0,
-            status: shouldVerify
-              ? 'crowd_verified'
-              : (existingRecord.status as HazardRecord['status']),
+            status: nextStatus,
           }
         );
 
-        if (updated.error) {
-          return res.status(500).json({ error: updated.error.message });
+        if (!updated.error && updated.data) {
+          await recordDeviceVote(supabase, hazardId, deviceHash, 'confirm');
+          if (oldStatus !== updated.data.status) {
+            await logHazardHistory(
+              supabase,
+              hazardId,
+              oldStatus,
+              updated.data.status,
+              deviceHash
+            );
+          }
+          return res.status(200).json(updated.data);
         }
-
-        return res.status(200).json(updated.data);
-      } catch (err: unknown) {
-        const mockMatch = mockHazards.find((h) => h.id === hazardId);
-        if (mockMatch) {
-          return confirmMockHazard(hazardId, res, trustWeight);
-        }
-        const message =
-          err instanceof Error ? err.message : 'Internal server error';
-        return res.status(500).json({ error: message });
+      } catch {
+        // Fall back to mock update
       }
     }
 
-    return confirmMockHazard(hazardId, res, trustWeight);
+    const mockResult = confirmMockHazard(hazardId, trustWeight);
+    if (!mockResult) {
+      return res.status(404).json({ error: 'Hazard not found' });
+    }
+
+    await recordDeviceVote(supabase, hazardId, deviceHash, 'confirm');
+    if (oldStatus !== mockResult.status) {
+      await logHazardHistory(
+        supabase,
+        hazardId,
+        oldStatus,
+        mockResult.status,
+        deviceHash
+      );
+    }
+
+    return res.status(200).json(mockResult);
   } catch (err: unknown) {
     const message =
       err instanceof Error ? err.message : 'Internal server error';
@@ -702,7 +929,15 @@ const handleResolveHazard = async (req: Request, res: Response) => {
     }
 
     const hazardId = id.trim();
-    const rawWeight = req.body?.trustWeight;
+    const { userLat, userLng, demoBypass, trustWeight: rawWeight } = req.body || {};
+    const isDemoBypass = demoBypass === true;
+
+    const rawDeviceHash = req.headers['x-device-hash'];
+    const deviceHash =
+      typeof rawDeviceHash === 'string' && rawDeviceHash.trim()
+        ? rawDeviceHash.trim()
+        : (req.ip as string) || req.socket?.remoteAddress || 'anonymous-device';
+
     const trustWeight =
       typeof rawWeight === 'number' && !isNaN(rawWeight) && rawWeight > 0
         ? Math.round(rawWeight)
@@ -710,36 +945,83 @@ const handleResolveHazard = async (req: Request, res: Response) => {
 
     const supabase = getSupabaseClient();
 
-    if (supabase) {
+    // 1. Fetch hazard to verify existence and get coordinates & current status
+    const recordResult = await getHazardRecordForVote(supabase, hazardId);
+    if (recordResult.error && !recordResult.data) {
+      return res.status(500).json({ error: recordResult.error.message });
+    }
+    if (!recordResult.data) {
+      return res.status(404).json({ error: 'Hazard not found' });
+    }
+
+    const existingRecord = recordResult.data;
+
+    // 2. 150m Proximity Check (FR-22)
+    const userLatNum =
+      typeof userLat === 'number'
+        ? userLat
+        : typeof userLat === 'string' && userLat.trim() !== ''
+        ? Number(userLat)
+        : NaN;
+
+    const userLngNum =
+      typeof userLng === 'number'
+        ? userLng
+        : typeof userLng === 'string' && userLng.trim() !== ''
+        ? Number(userLng)
+        : NaN;
+
+    const hasUserCoords =
+      !isNaN(userLatNum) &&
+      isFinite(userLatNum) &&
+      !isNaN(userLngNum) &&
+      isFinite(userLngNum);
+
+    if (hasUserCoords && !isDemoBypass) {
+      const distance = haversineDistanceMeters(
+        userLatNum,
+        userLngNum,
+        existingRecord.latitude,
+        existingRecord.longitude
+      );
+      if (distance > 150) {
+        return res.status(403).json({
+          error:
+            'You must be within 150m of the hazard to vote (enable Demo Mode for remote testing).',
+        });
+      }
+    }
+
+    // 3. Independent Vote Guard (FR-22, FR-23)
+    if (!isDemoBypass) {
+      const alreadyVoted = await hasDeviceVoted(
+        supabase,
+        hazardId,
+        deviceHash,
+        'resolve'
+      );
+      if (alreadyVoted) {
+        return res.status(409).json({
+          error: 'You have already voted on this hazard.',
+        });
+      }
+    }
+
+    // FR-24 & NFR-21: Require at least 3 crowd consensus votes to de-escalate to resolved
+    const oldStatus: string = existingRecord.status;
+    const nextResolved = (existingRecord.resolved_count || 0) + trustWeight;
+    const shouldResolve = nextResolved >= 3;
+    const nextStatus: 'active' | 'crowd_verified' | 'resolved' = shouldResolve
+      ? 'resolved'
+      : existingRecord.status || 'active';
+
+    // 4. Update in Supabase or in-memory mock
+    if (
+      supabase &&
+      typeof existingRecord.id === 'string' &&
+      !existingRecord.id.startsWith('d0000000-')
+    ) {
       try {
-        const fetched = await fetchHazardById(supabase, hazardId);
-
-        if (fetched.error) {
-          if (fetched.error.code === '22P02') {
-            return resolveMockHazard(hazardId, res, undefined, undefined, undefined, trustWeight);
-          }
-          const mockMatch = mockHazards.find((h) => h.id === hazardId);
-          if (mockMatch) {
-            return resolveMockHazard(hazardId, res, undefined, undefined, undefined, trustWeight);
-          }
-          return res.status(500).json({ error: fetched.error.message });
-        }
-
-        const existingRecord = fetched.data;
-        if (!existingRecord) {
-          const mockMatch = mockHazards.find((h) => h.id === hazardId);
-          if (mockMatch) {
-            return resolveMockHazard(hazardId, res, undefined, undefined, undefined, trustWeight);
-          }
-          return res.status(404).json({ error: 'Hazard not found' });
-        }
-
-        // FR-24 & NFR-21: Require at least 3 crowd consensus votes to de-escalate to resolved
-        const nextResolved = (existingRecord.resolved_count || 0) + trustWeight;
-        const shouldResolve = nextResolved >= 3;
-        const nextStatus: 'active' | 'crowd_verified' | 'resolved' = shouldResolve
-          ? 'resolved'
-          : existingRecord.status || 'active';
         const statusOnlyPayload: Record<string, any> = shouldResolve
           ? { status: 'resolved' }
           : {};
@@ -753,7 +1035,7 @@ const handleResolveHazard = async (req: Request, res: Response) => {
           hazardId,
           primaryPayload,
           statusOnlyPayload,
-          fetched.hasResolvedCountColumn,
+          recordResult.hasResolvedCountColumn ?? true,
           existingRecord,
           {
             confirmations: existingRecord.confirmations ?? 1,
@@ -762,30 +1044,48 @@ const handleResolveHazard = async (req: Request, res: Response) => {
           }
         );
 
-        if (updated.error) {
-          return resolveMockHazard(
-            hazardId,
-            res,
-            existingRecord,
-            nextResolved,
-            nextStatus,
-            trustWeight
-          );
+        if (!updated.error && updated.data) {
+          await recordDeviceVote(supabase, hazardId, deviceHash, 'resolve');
+          if (oldStatus !== updated.data.status) {
+            await logHazardHistory(
+              supabase,
+              hazardId,
+              oldStatus,
+              updated.data.status,
+              deviceHash
+            );
+          }
+          return res.status(200).json(updated.data);
         }
-
-        return res.status(200).json(updated.data);
-      } catch (err: unknown) {
-        const mockMatch = mockHazards.find((h) => h.id === hazardId);
-        if (mockMatch) {
-          return resolveMockHazard(hazardId, res, undefined, undefined, undefined, trustWeight);
-        }
-        const message =
-          err instanceof Error ? err.message : 'Internal server error';
-        return res.status(500).json({ error: message });
+      } catch {
+        // Fall back to mock update
       }
     }
 
-    return resolveMockHazard(hazardId, res, undefined, undefined, undefined, trustWeight);
+    const mockResult = resolveMockHazard(
+      hazardId,
+      existingRecord,
+      nextResolved,
+      nextStatus,
+      trustWeight
+    );
+
+    if (!mockResult) {
+      return res.status(404).json({ error: 'Hazard not found' });
+    }
+
+    await recordDeviceVote(supabase, hazardId, deviceHash, 'resolve');
+    if (oldStatus !== mockResult.status) {
+      await logHazardHistory(
+        supabase,
+        hazardId,
+        oldStatus,
+        mockResult.status,
+        deviceHash
+      );
+    }
+
+    return res.status(200).json(mockResult);
   } catch (err: unknown) {
     const message =
       err instanceof Error ? err.message : 'Internal server error';
