@@ -76,3 +76,7 @@ BEGIN
   END IF;
 END;
 $$;
+
+-- 6. FR-04: Device trust score & spam throttling columns on device_tokens (idempotent)
+ALTER TABLE device_tokens ADD COLUMN IF NOT EXISTS trust_score INT DEFAULT 10;
+ALTER TABLE device_tokens ADD COLUMN IF NOT EXISTS spam_strikes INT DEFAULT 0;

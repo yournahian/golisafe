@@ -351,6 +351,42 @@ export async function resolveHazard(
   }
 }
 
+export interface DeviceTrustProfile {
+  trust_score: number;
+  is_trusted: boolean;
+  spam_strikes: number;
+}
+
+export async function fetchDeviceTrust(): Promise<DeviceTrustProfile> {
+  try {
+    const deviceHash = await getDeviceHash();
+    const response = await fetch(`${API_BASE_URL}/hazards/trust`, {
+      method: 'GET',
+      headers: {
+        'x-device-hash': deviceHash,
+      },
+    });
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+    const data = await response.json();
+    const trustScore =
+      typeof data?.trust_score === 'number' ? data.trust_score : 10;
+    return {
+      trust_score: trustScore,
+      is_trusted: Boolean(data?.is_trusted ?? trustScore >= 50),
+      spam_strikes:
+        typeof data?.spam_strikes === 'number' ? data.spam_strikes : 0,
+    };
+  } catch {
+    return {
+      trust_score: 10,
+      is_trusted: false,
+      spam_strikes: 0,
+    };
+  }
+}
+
 export async function syncOfflineReports(): Promise<{
   synced: HazardRecord[];
   remaining: number;

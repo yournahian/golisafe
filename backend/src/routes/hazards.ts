@@ -557,6 +557,85 @@ export interface HazardHistoryEntry {
 }
 export const inMemoryHazardHistory: HazardHistoryEntry[] = [];
 
+// FR-04: Backend-persisted device trust score & spam strike store (in-memory fallback)
+export interface DeviceTrustState {
+  trustScore: number;
+  spamStrikes: number;
+}
+const DEFAULT_TRUST_SCORE = 10;
+const deviceTrustMap = new Map<string, DeviceTrustState>();
+
+async function getDeviceTrust(
+  supabase: SupabaseClient | null,
+  deviceHash: string
+): Promise<DeviceTrustState> {
+  if (supabase) {
+    try {
+      const { data, error } = await supabase
+        .from('device_tokens')
+        .select('trust_score, spam_strikes')
+        .eq('token_hash', deviceHash)
+        .maybeSingle();
+
+      if (!error && data) {
+        const state: DeviceTrustState = {
+          trustScore:
+            typeof (data as any).trust_score === 'number'
+              ? (data as any).trust_score
+              : DEFAULT_TRUST_SCORE,
+          spamStrikes:
+            typeof (data as any).spam_strikes === 'number'
+              ? (data as any).spam_strikes
+              : 0,
+        };
+        deviceTrustMap.set(deviceHash, state);
+        return state;
+      }
+    } catch {
+      // Fall back to in-memory map if DB/columns unavailable
+    }
+  }
+
+  return (
+    deviceTrustMap.get(deviceHash) ?? {
+      trustScore: DEFAULT_TRUST_SCORE,
+      spamStrikes: 0,
+    }
+  );
+}
+
+async function adjustDeviceTrust(
+  supabase: SupabaseClient | null,
+  deviceHash: string,
+  trustDelta: number,
+  strikeDelta = 0
+): Promise<DeviceTrustState> {
+  const current = await getDeviceTrust(supabase, deviceHash);
+  const next: DeviceTrustState = {
+    trustScore: Math.max(-50, Math.min(100, current.trustScore + trustDelta)),
+    spamStrikes: Math.max(0, current.spamStrikes + strikeDelta),
+  };
+  deviceTrustMap.set(deviceHash, next);
+
+  if (supabase) {
+    try {
+      await supabase.from('device_tokens').upsert(
+        {
+          token_hash: deviceHash,
+          trust_score: next.trustScore,
+          spam_strikes: next.spamStrikes,
+          last_report_at: new Date().toISOString(),
+        },
+        { onConflict: 'token_hash' }
+      );
+    } catch {
+      // Non-fatal if device_tokens table or columns are unavailable
+    }
+  }
+
+  return next;
+}
+
 function toDbVoteType(voteType: 'confirm' | 'resolve'): 'still_there' | 'resolved' {
   return voteType === 'confirm' ? 'still_there' : 'resolved';
 }
@@ -776,12 +855,12 @@ const handleConfirmHazard = async (req: Request, res: Response) => {
         ? rawDeviceHash.trim()
         : (req.ip as string) || req.socket?.remoteAddress || 'anonymous-device';
 
-    const trustWeight =
-      typeof rawWeight === 'number' && !isNaN(rawWeight) && rawWeight > 0
-        ? Math.round(rawWeight)
-        : 1;
-
     const supabase = getSupabaseClient();
+
+    // FR-04: Compute effective vote weight server-side from device trust score
+    const deviceTrust = await getDeviceTrust(supabase, deviceHash);
+    const effectiveWeight = deviceTrust.trustScore >= 50 ? 2 : 1;
+    const trustWeight = effectiveWeight;
 
     // 1. Fetch hazard to verify existence and get coordinates & current status
     const recordResult = await getHazardRecordForVote(supabase, hazardId);
@@ -883,6 +962,7 @@ const handleConfirmHazard = async (req: Request, res: Response) => {
 
         if (!updated.error && updated.data) {
           await recordDeviceVote(supabase, hazardId, deviceHash, 'confirm');
+          await adjustDeviceTrust(supabase, deviceHash, 2, 0);
           if (oldStatus !== updated.data.status) {
             await logHazardHistory(
               supabase,
@@ -905,6 +985,7 @@ const handleConfirmHazard = async (req: Request, res: Response) => {
     }
 
     await recordDeviceVote(supabase, hazardId, deviceHash, 'confirm');
+    await adjustDeviceTrust(supabase, deviceHash, 2, 0);
     if (oldStatus !== mockResult.status) {
       await logHazardHistory(
         supabase,
@@ -941,12 +1022,12 @@ const handleResolveHazard = async (req: Request, res: Response) => {
         ? rawDeviceHash.trim()
         : (req.ip as string) || req.socket?.remoteAddress || 'anonymous-device';
 
-    const trustWeight =
-      typeof rawWeight === 'number' && !isNaN(rawWeight) && rawWeight > 0
-        ? Math.round(rawWeight)
-        : 1;
-
     const supabase = getSupabaseClient();
+
+    // FR-04: Compute effective vote weight server-side from device trust score
+    const deviceTrust = await getDeviceTrust(supabase, deviceHash);
+    const effectiveWeight = deviceTrust.trustScore >= 50 ? 2 : 1;
+    const trustWeight = effectiveWeight;
 
     // 1. Fetch hazard to verify existence and get coordinates & current status
     const recordResult = await getHazardRecordForVote(supabase, hazardId);
@@ -1112,6 +1193,34 @@ router.patch('/:id/resolve', handleResolveHazard);
 router.post('/:id/resolve', handleResolveHazard);
 
 /**
+ * GET /api/hazards/trust
+ * FR-04: Return anonymized device trust_score, is_trusted (>= 50), and spam_strikes.
+ */
+router.get('/trust', async (req: Request, res: Response) => {
+  try {
+    const rawDeviceHash = req.headers['x-device-hash'];
+    const deviceHash =
+      typeof rawDeviceHash === 'string' && rawDeviceHash.trim()
+        ? rawDeviceHash.trim()
+        : (req.ip as string) || req.socket?.remoteAddress || 'anonymous-device';
+
+    const supabase = getSupabaseClient();
+    const trust = await getDeviceTrust(supabase, deviceHash);
+    return res.status(200).json({
+      trust_score: trust.trustScore,
+      is_trusted: trust.trustScore >= 50,
+      spam_strikes: trust.spamStrikes,
+    });
+  } catch {
+    return res.status(200).json({
+      trust_score: DEFAULT_TRUST_SCORE,
+      is_trusted: false,
+      spam_strikes: 0,
+    });
+  }
+});
+
+/**
  * GET /api/hazards
  * Query active hazards ('active' or 'crowd_verified') ordered by created_at DESC.
  * Lazy TTL filtering: Excludes expired temporary hazards; structural hazards persist.
@@ -1212,14 +1321,24 @@ router.get('/', async (req: Request, res: Response) => {
  */
 router.post('/', async (req: Request, res: Response) => {
   try {
-    // 1. Rate Limiting Check (FR-02, NFR-08: Max 3 reports per 10 minutes per device)
+    // 1. Rate Limiting & Spam Throttling Check (FR-02, FR-04, NFR-08)
     const deviceToken =
       (req.headers['x-device-hash'] as string) ||
       req.ip ||
       req.socket.remoteAddress ||
       'anonymous-device';
 
+    const supabase = getSupabaseClient();
+    const currentTrust = await getDeviceTrust(supabase, deviceToken);
+    if (currentTrust.trustScore <= 0 || currentTrust.spamStrikes >= 3) {
+      return res.status(429).json({
+        error:
+          'Device temporarily throttled due to repeated spam/duplicate reports',
+      });
+    }
+
     if (!checkRateLimit(deviceToken)) {
+      await adjustDeviceTrust(supabase, deviceToken, -10, 1);
       return res.status(429).json({
         error:
           'Rate limit exceeded: maximum 3 hazard reports per 10 minutes allowed per device token.',
@@ -1239,6 +1358,7 @@ router.post('/', async (req: Request, res: Response) => {
 
     // 2. Anti-Spam / Abusive Content Filter (FR-12)
     if (isSpamOrAbusive(landmark_context) || isSpamOrAbusive(sub_tag)) {
+      await adjustDeviceTrust(supabase, deviceToken, -10, 1);
       return res.status(400).json({
         error:
           'Report rejected: content flagged as spam, repetitive gibberish, or abusive language.',
@@ -1277,7 +1397,6 @@ router.post('/', async (req: Request, res: Response) => {
     }
 
     const resolvedSeverity: HazardSeverity = severity || 'Medium';
-    const supabase = getSupabaseClient();
 
     // 3. Duplicate Check (FR-12: Reject duplicate of same category within 20m in last 5 minutes)
     const duplicate = await findRecentDuplicateHazard(
@@ -1288,6 +1407,7 @@ router.post('/', async (req: Request, res: Response) => {
     );
 
     if (duplicate) {
+      await adjustDeviceTrust(supabase, deviceToken, -10, 1);
       return res.status(409).json({
         error:
           'Duplicate report: an active hazard of the same category was already reported within 20 meters in the last 5 minutes.',
@@ -1366,6 +1486,9 @@ router.post('/', async (req: Request, res: Response) => {
             // Non-fatal if device_tokens table unavailable
           }
 
+          // FR-04: Reward valid hazard report (+5 trust score)
+          await adjustDeviceTrust(supabase, deviceToken, 5, 0);
+
           if (image_url && typeof image_url === 'string' && image_url.trim()) {
             try {
               await supabase.from('report_media').insert({
@@ -1394,6 +1517,7 @@ router.post('/', async (req: Request, res: Response) => {
     }
 
     // In-memory fallback if Supabase is offline
+    await adjustDeviceTrust(supabase, deviceToken, 5, 0);
     const newHazard: HazardRecord = {
       id: `hazard-${Date.now()}`,
       category: category as HazardCategory,

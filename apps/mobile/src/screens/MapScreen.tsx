@@ -37,9 +37,11 @@ import { TRANSLATIONS, type Language } from '../i18n/translations';
 import {
   confirmHazard,
   createHazard,
+  fetchDeviceTrust,
   fetchHazards,
   fetchSafeRoutes,
   resolveHazard,
+  type DeviceTrustProfile,
 } from '../services/api';
 import { subscribeToHazardChanges } from '../services/realtime';
 import {
@@ -389,11 +391,18 @@ export default function MapScreen() {
   const [tappedLocation, setTappedLocation] =
     useState<TappedLocationState | null>(null);
 
-  // Auth & Citizen Reputation State
+  // Auth & Citizen Reputation State (FR-04 backend-synced device trust)
   const [currentUser, setCurrentUser] = useState<AuthUser | null>(null);
   const [authModalOpen, setAuthModalOpen] = useState<boolean>(false);
   const [profileModalOpen, setProfileModalOpen] = useState<boolean>(false);
   const [userReportsCount, setUserReportsCount] = useState<number>(0);
+  const [deviceTrust, setDeviceTrust] = useState<DeviceTrustProfile>({
+    trust_score: 10,
+    is_trusted: false,
+    spam_strikes: 0,
+  });
+  const [driverBypassDismissed, setDriverBypassDismissed] =
+    useState<boolean>(false);
 
   // Multi-Route Risk Scoring & Live Toggle State
   const [routeOptions, setRouteOptions] = useState<SafeRouteOption[]>([]);
@@ -427,9 +436,16 @@ export default function MapScreen() {
   const t = TRANSLATIONS[locale];
 
   const isUserTrusted = Boolean(
-    currentUser && (currentUser.is_trusted || currentUser.trust_score >= 50),
+    deviceTrust.is_trusted ||
+      deviceTrust.trust_score >= 50 ||
+      (currentUser && (currentUser.is_trusted || currentUser.trust_score >= 50)),
   );
   const userTrustWeight = isUserTrusted ? 2 : 1;
+
+  const refreshDeviceTrust = useCallback(async () => {
+    const trust = await fetchDeviceTrust();
+    setDeviceTrust(trust);
+  }, []);
 
   const loadHazards = useCallback(async () => {
     try {
@@ -453,7 +469,8 @@ export default function MapScreen() {
 
   useEffect(() => {
     loadHazards();
-  }, [loadHazards]);
+    refreshDeviceTrust();
+  }, [loadHazards, refreshDeviceTrust]);
 
   // Architecture Section 2.2: Live Supabase Realtime WebSocket sync (INSERT & UPDATE)
   useEffect(() => {
@@ -912,6 +929,7 @@ export default function MapScreen() {
       clearTappedPinOnMap();
       setSelectedHazardId(createdRecord.id);
       setReportModalVisible(false);
+      refreshDeviceTrust();
       const queuedOffline = createdRecord.id.startsWith('offline-');
       Alert.alert(
         queuedOffline
@@ -1012,10 +1030,11 @@ export default function MapScreen() {
           ),
         );
       } finally {
+        refreshDeviceTrust();
         setConfirmingId(null);
       }
     },
-    [userTrustWeight, currentUser, userLocation, demoMode, locale],
+    [userTrustWeight, currentUser, userLocation, demoMode, locale, refreshDeviceTrust],
   );
 
   const handleResolveHazard = useCallback(
@@ -1093,10 +1112,11 @@ export default function MapScreen() {
           setSelectedHazardId(null);
         }
       } finally {
+        refreshDeviceTrust();
         setResolvingId(null);
       }
     },
-    [userTrustWeight, userLocation, demoMode, locale],
+    [userTrustWeight, userLocation, demoMode, locale, refreshDeviceTrust],
   );
 
   const handleToggleDangerRings = useCallback(() => {
@@ -1139,12 +1159,18 @@ export default function MapScreen() {
           h.category === 'extortion_spot',
       );
     } else if (viewMode === 'driver_biker') {
-      list = list.filter(
-        (h) =>
-          h.category === 'pothole_manhole' ||
-          h.category === 'waterlogging' ||
-          h.category === 'extortion_spot',
-      );
+      list = list
+        .filter(
+          (h) =>
+            h.category === 'pothole_manhole' ||
+            h.category === 'waterlogging' ||
+            h.category === 'extortion_spot',
+        )
+        .sort((a, b) => {
+          const aExt = a.category === 'extortion_spot' ? 0 : 1;
+          const bExt = b.category === 'extortion_spot' ? 0 : 1;
+          return aExt - bExt;
+        });
     }
 
     if (categoryFilter !== 'all') {
@@ -1252,6 +1278,40 @@ export default function MapScreen() {
     () => filteredHazards.find((h) => h.id === selectedHazardId) ?? null,
     [filteredHazards, selectedHazardId],
   );
+
+  // FR-16: Detect active extortion choke-points within 2km when Driver/Biker mode is active
+  const nearestExtortionChokepoint = useMemo(() => {
+    if (viewMode !== 'driver_biker') return null;
+
+    const activeExtortions = hazards.filter(
+      (h) =>
+        h.category === 'extortion_spot' &&
+        h.status !== 'resolved' &&
+        h.status !== 'expired',
+    );
+    if (activeExtortions.length === 0) return null;
+
+    let best: { hazard: HazardRecord; distanceMeters: number } | null = null;
+    for (const h of activeExtortions) {
+      const distFromUser = computeDistanceMeters(
+        userLocation.latitude,
+        userLocation.longitude,
+        h.latitude,
+        h.longitude,
+      );
+      const distFromCenter = computeDistanceMeters(
+        mapCenter.latitude,
+        mapCenter.longitude,
+        h.latitude,
+        h.longitude,
+      );
+      const minDist = Math.min(distFromUser, distFromCenter);
+      if (minDist <= 2000 && (!best || minDist < best.distanceMeters)) {
+        best = { hazard: h, distanceMeters: minDist };
+      }
+    }
+    return best;
+  }, [viewMode, hazards, userLocation, mapCenter]);
 
   useEffect(() => {
     if (!webViewReady || !webViewRef.current) return;
@@ -1876,6 +1936,84 @@ export default function MapScreen() {
           </View>
         )}
 
+      {/* FR-16: Driver/Biker Auto Side-Street Detour Suggestion Banner */}
+      {viewMode === 'driver_biker' &&
+        nearestExtortionChokepoint &&
+        !driverBypassDismissed &&
+        !hasActiveRoutes &&
+        !proximityAlert && (
+          <View style={[styles.driverBypassBanner, { top: topInset + 186 }]}>
+            <View style={styles.proximityBannerTopRow}>
+              <TouchableOpacity
+                style={styles.proximityBannerContent}
+                activeOpacity={0.85}
+                onPress={() => {
+                  const h = nearestExtortionChokepoint.hazard;
+                  setSelectedHazardId(h.id);
+                  webViewRef.current?.injectJavaScript(
+                    `window.focusHazard && window.focusHazard(${h.latitude}, ${h.longitude}); true;`,
+                  );
+                }}
+              >
+                <Text style={styles.driverBypassTitle} numberOfLines={1}>
+                  {locale === 'bn'
+                    ? `🛑 সামনে চাঁদা পয়েন্ট (${nearestExtortionChokepoint.distanceMeters}মি) — বিকল্প পাশের রাস্তা দেখুন`
+                    : `🛑 Extortion Choke-Point ahead (${nearestExtortionChokepoint.distanceMeters}m) — Tap for Side-Street Detour`}
+                </Text>
+                <Text style={styles.driverBypassSub} numberOfLines={1}>
+                  {nearestExtortionChokepoint.hazard.landmark_context ||
+                    CATEGORY_META.extortion_spot.name}
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.proximityBannerClose}
+                onPress={() => setDriverBypassDismissed(true)}
+                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              >
+                <Text style={styles.proximityBannerCloseText}>✕</Text>
+              </TouchableOpacity>
+            </View>
+
+            <TouchableOpacity
+              style={styles.driverBypassBtn}
+              activeOpacity={0.85}
+              disabled={routeLoading}
+              onPress={() => {
+                const h = nearestExtortionChokepoint.hazard;
+                // Compute a safe destination past the extortion choke-point (~400m beyond)
+                const dLat = h.latitude - userLocation.latitude;
+                const dLng = h.longitude - userLocation.longitude;
+                const mag = Math.sqrt(dLat * dLat + dLng * dLng) || 0.001;
+                const destLat = Number(
+                  (h.latitude + (dLat / mag) * 0.0038).toFixed(6),
+                );
+                const destLng = Number(
+                  (h.longitude + (dLng / mag) * 0.0038).toFixed(6),
+                );
+                const detourLabel =
+                  locale === 'bn'
+                    ? `বিকল্প পাশের রাস্তা (${h.landmark_context || 'চাঁদা পয়েন্ট বাইপাস'})`
+                    : `Side-Street Detour (${h.landmark_context || 'Extortion Bypass'})`;
+                setDriverBypassDismissed(true);
+                handleFindSafeRoute(destLat, destLng, detourLabel);
+              }}
+            >
+              {routeLoading ? (
+                <ActivityIndicator size="small" color="#1E1B18" />
+              ) : (
+                <>
+                  <MapUiIcon name="git-branch" size={14} color="#1E1B18" />
+                  <Text style={styles.driverBypassBtnText}>
+                    {locale === 'bn'
+                      ? '🏍️ বিকল্প পাশের রাস্তা দেখুন'
+                      : '🏍️ Suggest Side-Street Detour'}
+                  </Text>
+                </>
+              )}
+            </TouchableOpacity>
+          </View>
+        )}
+
       {/* Layer Status Toast */}
       {layerToast && !proximityAlert && (
         <View
@@ -2036,6 +2174,9 @@ export default function MapScreen() {
                   ]}
                   onPress={() => {
                     setViewMode(mode.id);
+                    if (mode.id === 'driver_biker') {
+                      setDriverBypassDismissed(false);
+                    }
                     setLayersModalOpen(false);
                   }}
                 >
@@ -2940,7 +3081,22 @@ export default function MapScreen() {
       <ProfileModal
         visible={profileModalOpen}
         onClose={() => setProfileModalOpen(false)}
-        user={currentUser}
+        user={
+          currentUser
+            ? {
+                ...currentUser,
+                trust_score: Math.max(
+                  currentUser.trust_score,
+                  deviceTrust.trust_score,
+                ),
+                is_trusted:
+                  currentUser.is_trusted || deviceTrust.is_trusted,
+              }
+            : {
+                trust_score: deviceTrust.trust_score,
+                is_trusted: deviceTrust.is_trusted,
+              }
+        }
         totalReportsCount={userReportsCount}
         onSignOut={() => setCurrentUser(null)}
         isDark={isNighttime}
