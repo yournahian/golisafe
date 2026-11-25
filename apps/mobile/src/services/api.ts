@@ -232,11 +232,38 @@ export async function createHazard(
 
 export const submitHazard = createHazard;
 
+export interface HazardVoteOptions {
+  trustWeight?: number;
+  userLat?: number;
+  userLng?: number;
+  demoBypass?: boolean;
+}
+
+function normalizeVoteBody(
+  trustWeightOrOptions: number | HazardVoteOptions = 1,
+): {
+  trustWeight: number;
+  userLat?: number;
+  userLng?: number;
+  demoBypass?: boolean;
+} {
+  if (typeof trustWeightOrOptions === 'number') {
+    return { trustWeight: trustWeightOrOptions };
+  }
+  return {
+    trustWeight: trustWeightOrOptions.trustWeight ?? 1,
+    userLat: trustWeightOrOptions.userLat,
+    userLng: trustWeightOrOptions.userLng,
+    demoBypass: trustWeightOrOptions.demoBypass,
+  };
+}
+
 export async function confirmHazard(
   id: string,
-  trustWeight: number = 1,
+  trustWeightOrOptions: number | HazardVoteOptions = 1,
 ): Promise<Hazard> {
   const deviceHash = await getDeviceHash();
+  const body = normalizeVoteBody(trustWeightOrOptions);
   const response = await fetch(
     `${API_BASE_URL}/hazards/${encodeURIComponent(id)}/confirm`,
     {
@@ -245,12 +272,21 @@ export async function confirmHazard(
         'Content-Type': 'application/json',
         'x-device-hash': deviceHash,
       },
-      body: JSON.stringify({ trustWeight }),
+      body: JSON.stringify(body),
     },
   );
 
   if (!response.ok) {
-    throw new Error(`Failed to confirm hazard: HTTP ${response.status}`);
+    let message = `Failed to confirm hazard: HTTP ${response.status}`;
+    try {
+      const errJson = await response.json();
+      if (typeof errJson?.error === 'string' && errJson.error.trim()) {
+        message = errJson.error;
+      }
+    } catch {
+      // Keep default error message
+    }
+    throw new Error(message);
   }
 
   return response.json();
@@ -258,9 +294,10 @@ export async function confirmHazard(
 
 export async function resolveHazard(
   id: string,
-  trustWeight: number = 1,
+  trustWeightOrOptions: number | HazardVoteOptions = 1,
 ): Promise<Hazard> {
   const deviceHash = await getDeviceHash();
+  const body = normalizeVoteBody(trustWeightOrOptions);
   try {
     const response = await fetch(
       `${API_BASE_URL}/hazards/${encodeURIComponent(id)}/resolve`,
@@ -270,24 +307,45 @@ export async function resolveHazard(
           'Content-Type': 'application/json',
           'x-device-hash': deviceHash,
         },
-        body: JSON.stringify({ trustWeight }),
+        body: JSON.stringify(body),
       },
     );
 
     if (!response.ok) {
-      throw new Error(`Failed to resolve hazard: HTTP ${response.status}`);
+      let message = `Failed to resolve hazard: HTTP ${response.status}`;
+      try {
+        const errJson = await response.json();
+        if (typeof errJson?.error === 'string' && errJson.error.trim()) {
+          message = errJson.error;
+        }
+      } catch {
+        // Keep default error message
+      }
+      if (response.status >= 400 && response.status < 500) {
+        throw new Error(message);
+      }
+      throw new Error(message);
     }
 
     return response.json();
-  } catch {
+  } catch (err) {
+    if (
+      err instanceof Error &&
+      (err.message.toLowerCase().includes('150m') ||
+        err.message.toLowerCase().includes('already voted') ||
+        err.message.toLowerCase().includes('demo mode'))
+    ) {
+      throw err;
+    }
+    const weight = body.trustWeight ?? 1;
     return {
       id,
       category: 'pothole_manhole',
       severity: 'Low',
       latitude: 23.7806,
       longitude: 90.407,
-      status: trustWeight >= 3 ? 'resolved' : 'active',
-      resolved_count: trustWeight,
+      status: weight >= 3 ? 'resolved' : 'active',
+      resolved_count: weight,
       created_at: new Date().toISOString(),
     };
   }

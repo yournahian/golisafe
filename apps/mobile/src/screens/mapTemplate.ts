@@ -1,4 +1,4 @@
-import { CATEGORY_META, DHAKA_CENTER } from './mapConstants';
+import { CATEGORY_META, DHAKA_CENTER, DHAKA_CROSSINGS } from './mapConstants';
 
 export const LEAFLET_HTML = `<!DOCTYPE html>
 <html>
@@ -168,6 +168,26 @@ export const LEAFLET_HTML = `<!DOCTYPE html>
     .danger-radius-ring {
       animation: dangerPulse 2.1s ease-in-out infinite;
     }
+    .crossing-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 3px 7px;
+      border-radius: 999px;
+      font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+      font-size: 10px;
+      font-weight: 700;
+      white-space: nowrap;
+      border: 1.5px solid #FFFFFF;
+      box-shadow: 0 3px 8px rgba(15, 23, 42, 0.35);
+      color: #FFFFFF;
+    }
+    .crossing-pill.safe {
+      background: #10B981;
+    }
+    .crossing-pill.unsafe {
+      background: #F97316;
+    }
   </style>
 </head>
 <body class="night-mode">
@@ -175,6 +195,7 @@ export const LEAFLET_HTML = `<!DOCTYPE html>
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script>
     const CATEGORY_META = ${JSON.stringify(CATEGORY_META)};
+    const DHAKA_CROSSINGS = ${JSON.stringify(DHAKA_CROSSINGS)};
 
     const map = L.map('map', {
       center: [${DHAKA_CENTER.latitude}, ${DHAKA_CENTER.longitude}],
@@ -200,9 +221,46 @@ export const LEAFLET_HTML = `<!DOCTYPE html>
     }).addTo(map);
 
     const hazardLayer = L.layerGroup().addTo(map);
+    const crossingsLayer = L.layerGroup().addTo(map);
     const dangerRingsLayer = L.layerGroup().addTo(map);
     const routeLayer = L.layerGroup().addTo(map);
     let tappedPinMarker = null;
+
+    // FR-17: Render Dhaka safe zebra crossings vs unsafe footbridge indicators
+    function renderCrossingsLayer() {
+      crossingsLayer.clearLayers();
+      if (!Array.isArray(DHAKA_CROSSINGS)) return;
+      DHAKA_CROSSINGS.forEach(function(c) {
+        const isSafe = c.status === 'safe';
+        const iconSymbol = c.type === 'zebra_crossing' ? '🚶' : '🌉';
+        const pillIcon = L.divIcon({
+          className: '',
+          iconSize: [118, 24],
+          iconAnchor: [59, 12],
+          html:
+            '<div class="crossing-pill ' + (isSafe ? 'safe' : 'unsafe') + '">' +
+              '<span>' + iconSymbol + '</span>' +
+              '<span>' + c.badgeLabel + '</span>' +
+            '</div>'
+        });
+        const marker = L.marker([c.latitude, c.longitude], { icon: pillIcon }).addTo(crossingsLayer);
+        marker.bindPopup(
+          '<strong>' + c.name + '</strong><br/>' +
+          '<span style="color:' + (isSafe ? '#059669' : '#EA580C') + ';font-weight:700;">' +
+            c.badgeLabel +
+          '</span><br/>' + c.note
+        );
+      });
+    }
+    renderCrossingsLayer();
+
+    window.toggleCrossingsLayer = function(visible) {
+      if (visible) {
+        if (!map.hasLayer(crossingsLayer)) crossingsLayer.addTo(map);
+      } else {
+        if (map.hasLayer(crossingsLayer)) map.removeLayer(crossingsLayer);
+      }
+    };
 
     window.renderDangerRings = function(enabled, hazards) {
       dangerRingsLayer.clearLayers();
@@ -252,8 +310,20 @@ export const LEAFLET_HTML = `<!DOCTYPE html>
       window.clearTappedPin();
       tappedPinMarker = L.marker([lat, lng], {
         icon: tappedPinIcon,
-        interactive: false
+        draggable: true
       }).addTo(map);
+
+      // NFR-18: Allow fine-tuning pin placement in low-GPS alleys via dragend
+      tappedPinMarker.on('dragend', function(ev) {
+        const pos = ev.target.getLatLng();
+        if (window.ReactNativeWebView && pos) {
+          window.ReactNativeWebView.postMessage(JSON.stringify({
+            type: 'PIN_DRAGGED',
+            latitude: pos.lat,
+            longitude: pos.lng
+          }));
+        }
+      });
     };
 
     window.clearSafeRoute = function() {
