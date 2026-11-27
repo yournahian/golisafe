@@ -439,6 +439,13 @@ export const LEAFLET_HTML = `<!DOCTYPE html>
       }
     };
 
+    window.focusUserLocation = function(lat, lng, zoom) {
+      if (typeof lat === 'number' && typeof lng === 'number') {
+        userMarker.setLatLng([lat, lng]);
+        map.setView([lat, lng], typeof zoom === 'number' ? zoom : 15, { animate: true });
+      }
+    };
+
     window.setMapTheme = function(isNight, isHighContrast) {
       document.body.classList.toggle('night-mode', !!isNight);
       document.body.classList.toggle('light-mode', !isNight);

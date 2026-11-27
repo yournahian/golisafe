@@ -14,7 +14,7 @@ import {
 import * as ImagePicker from 'expo-image-picker';
 import { Audio } from 'expo-av';
 import { LightSensor } from 'expo-sensors';
-import { Ionicons } from '@expo/vector-icons';
+import AppIcon from '../AppIcon';
 import {
   HazardCategory,
   HazardSeverity,
@@ -548,7 +548,7 @@ export const QuickReportModal: React.FC<QuickReportModalProps> = ({
               <View style={styles.aiConfirmationCard}>
                 <View style={styles.aiHeaderRow}>
                   <View style={styles.aiBadge}>
-                    <Ionicons name="sparkles" size={13} color="#60A5FA" />
+                    <AppIcon name="sparkles" size={13} color="#60A5FA" />
                     <Text style={styles.aiBadgeText}>
                       {language === 'bn' ? 'এআই সনাক্তকরণ' : 'AI Classification (FR-13)'}
                     </Text>
@@ -579,7 +579,7 @@ export const QuickReportModal: React.FC<QuickReportModalProps> = ({
                     onPress={() => setAiDraft(null)}
                     activeOpacity={0.8}
                   >
-                    <Ionicons name="checkmark-circle" size={14} color="#FFFFFF" />
+                    <AppIcon name="checkmark-circle" size={14} color="#FFFFFF" />
                     <Text style={styles.aiConfirmBtnText}>
                       {language === 'bn' ? 'অনুমোদন' : 'Confirm'}
                     </Text>
@@ -601,7 +601,7 @@ export const QuickReportModal: React.FC<QuickReportModalProps> = ({
             {/* AI Timeout Notice if service timed out */}
             {aiTimeoutNotice && (
               <View style={styles.aiTimeoutBanner}>
-                <Ionicons name="information-circle-outline" size={15} color="#94A3B8" />
+                <AppIcon name="information-circle-outline" size={15} color="#94A3B8" />
                 <Text style={styles.aiTimeoutText}>{aiTimeoutNotice}</Text>
                 <TouchableOpacity onPress={() => setAiTimeoutNotice(null)}>
                   <Text style={styles.aiTimeoutDismiss}>✕</Text>
@@ -646,7 +646,7 @@ export const QuickReportModal: React.FC<QuickReportModalProps> = ({
                   </View>
                 ) : isRecording ? (
                   <View style={styles.voiceBtnContent}>
-                    <Ionicons name="stop-circle" size={18} color="#FFFFFF" />
+                    <AppIcon name="stop-circle" size={18} color="#FFFFFF" />
                     <Text style={[styles.voiceRecordBtnText, { color: '#FFFFFF' }]}>
                       {language === 'bn'
                         ? `রেকর্ডিং বন্ধ করুন (বাকি ${remainingSeconds}s)`
@@ -655,7 +655,7 @@ export const QuickReportModal: React.FC<QuickReportModalProps> = ({
                   </View>
                 ) : (
                   <View style={styles.voiceBtnContent}>
-                    <Ionicons name="mic" size={18} color="#93C5FD" />
+                    <AppIcon name="mic" size={18} color="#93C5FD" />
                     <Text style={styles.voiceRecordBtnText}>
                       {language === 'bn'
                         ? '🎙️ ভয়েস রেকর্ড করুন (সর্বোচ্চ ১৫ সে.)'
@@ -788,7 +788,7 @@ export const QuickReportModal: React.FC<QuickReportModalProps> = ({
                   >
                     <View style={styles.luxMeterHeader}>
                       <View style={styles.luxIconWrap}>
-                        <Ionicons
+                        <AppIcon
                           name={luxReading < 15 ? 'moon' : 'sunny'}
                           size={20}
                           color={luxReading < 15 ? '#C084FC' : '#FBBF24'}
@@ -834,7 +834,7 @@ export const QuickReportModal: React.FC<QuickReportModalProps> = ({
                   </View>
                 ) : sensorAvailable === false ? (
                   <View style={styles.luxFallbackCard}>
-                    <Ionicons name="information-circle-outline" size={18} color="#F59E0B" />
+                    <AppIcon name="information-circle-outline" size={18} color="#F59E0B" />
                     <View style={{ flex: 1 }}>
                       <Text style={styles.luxFallbackTitle}>
                         {language === 'bn'
@@ -946,7 +946,7 @@ export const QuickReportModal: React.FC<QuickReportModalProps> = ({
                     resizeMode="cover"
                   />
                   <View style={styles.photoPreviewOverlay}>
-                    <Ionicons name="checkmark-circle" size={14} color="#86EFAC" />
+                    <AppIcon name="checkmark-circle" size={14} color="#86EFAC" />
                     <Text style={styles.photoPreviewOverlayText}>
                       {language === 'bn'
                         ? 'ছবি সংযুক্ত (স্টোরেজে আপলোড হবে)'
@@ -961,7 +961,7 @@ export const QuickReportModal: React.FC<QuickReportModalProps> = ({
                     onPress={handleTakePhoto}
                     activeOpacity={0.8}
                   >
-                    <Ionicons name="camera-outline" size={18} color="#93C5FD" />
+                    <AppIcon name="camera-outline" size={18} color="#93C5FD" />
                     <Text style={styles.photoPickerBtnText}>
                       {language === 'bn' ? 'ক্যামেরা দিয়ে ছবি তুলুন' : 'Take Photo'}
                     </Text>
@@ -972,7 +972,7 @@ export const QuickReportModal: React.FC<QuickReportModalProps> = ({
                     onPress={handlePickFromGallery}
                     activeOpacity={0.8}
                   >
-                    <Ionicons name="images-outline" size={18} color="#93C5FD" />
+                    <AppIcon name="images-outline" size={18} color="#93C5FD" />
                     <Text style={styles.photoPickerBtnText}>
                       {language === 'bn' ? 'গ্যালারি থেকে নির্বাচন' : 'Choose Gallery'}
                     </Text>

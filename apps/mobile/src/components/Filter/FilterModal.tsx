@@ -7,7 +7,7 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
+import AppIcon from '../AppIcon';
 import type { Language } from '../../i18n/translations';
 
 export interface HazardFilterState {
@@ -194,7 +194,7 @@ export const FilterModal: React.FC<FilterModalProps> = ({
           {/* Header */}
           <View style={[styles.header, { borderBottomColor: theme.border }]}>
             <View style={styles.titleRow}>
-              <Ionicons
+              <AppIcon
                 name="options-outline"
                 size={20}
                 color={theme.activeChipText}
@@ -416,7 +416,7 @@ export const FilterModal: React.FC<FilterModalProps> = ({
               onPress={handleReset}
               activeOpacity={0.8}
             >
-              <Ionicons
+              <AppIcon
                 name="refresh-outline"
                 size={16}
                 color={theme.resetBtnText}
@@ -438,7 +438,7 @@ export const FilterModal: React.FC<FilterModalProps> = ({
               onPress={handleApply}
               activeOpacity={0.85}
             >
-              <Ionicons
+              <AppIcon
                 name="checkmark-circle-outline"
                 size={18}
                 color={theme.applyBtnText}

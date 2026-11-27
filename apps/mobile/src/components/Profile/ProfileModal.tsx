@@ -7,7 +7,7 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
+import AppIcon from '../AppIcon';
 
 export interface ProfileUser {
   id?: string;
@@ -223,7 +223,7 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
                     },
                   ]}
                 >
-                  <Ionicons
+                  <AppIcon
                     name={isTrusted ? 'shield-checkmark' : 'person'}
                     size={32}
                     color={isTrusted ? theme.trustedGold : theme.accent}
@@ -283,7 +283,7 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
                         },
                       ]}
                     >
-                      <Ionicons
+                      <AppIcon
                         name="checkmark-circle"
                         size={12}
                         color={theme.trustedGreen}
@@ -393,7 +393,7 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
                   },
                 ]}
               >
-                <Ionicons
+                <AppIcon
                   name="megaphone-outline"
                   size={22}
                   color={theme.accent}
@@ -419,7 +419,7 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
                   },
                 ]}
               >
-                <Ionicons
+                <AppIcon
                   name="shield-checkmark-outline"
                   size={22}
                   color={theme.trustedGreen}
@@ -449,7 +449,7 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
               onPress={handleSignOutPress}
               activeOpacity={0.8}
             >
-              <Ionicons
+              <AppIcon
                 name="log-out-outline"
                 size={18}
                 color={theme.signOutText}

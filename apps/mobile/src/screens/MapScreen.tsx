@@ -62,6 +62,7 @@ import {
 } from './mapGeoUtils';
 import { styles } from './MapScreen.styles';
 import FullReportScreen, { type FullReportDraft } from './FullReportScreen';
+import HazardDetailsScreen from './HazardDetailsScreen';
 import { LEAFLET_HTML } from './mapTemplate';
 
 try {
@@ -368,7 +369,10 @@ function HazardCategoryIcon({
 }
 
 export default function MapScreen() {
-  const [hazards, setHazards] = useState<HazardRecord[]>(DHAKA_SEED_HAZARDS);
+  // liveHazards = real hazards from backend API / Realtime; displayed hazards depend on Main vs Test mode
+  const [liveHazards, setLiveHazards] = useState<HazardRecord[]>([]);
+  const [appMode, setAppMode] = useState<'main' | 'test'>('main');
+  const demoMode = appMode === 'test';
   const [locale, setLocale] = useState<Language>('en');
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [searchDropdownOpen, setSearchDropdownOpen] = useState<boolean>(false);
@@ -386,14 +390,30 @@ export default function MapScreen() {
   const [isNighttime, setIsNighttime] = useState<boolean>(() =>
     isDeviceNightHours(),
   );
-  const [demoMode, setDemoMode] = useState<boolean>(true);
   const [selectedHazardId, setSelectedHazardId] = useState<string | null>(null);
+  const [detailsHazardId, setDetailsHazardId] = useState<string | null>(null);
   const [reportModalVisible, setReportModalVisible] = useState<boolean>(false);
   const [fullReportVisible, setFullReportVisible] = useState<boolean>(false);
   const [fullReportDraft, setFullReportDraft] =
     useState<FullReportDraft | null>(null);
   const [tappedLocation, setTappedLocation] =
     useState<TappedLocationState | null>(null);
+  const [hasCenteredRealGps, setHasCenteredRealGps] = useState<boolean>(false);
+  const [hasRealGpsFix, setHasRealGpsFix] = useState<boolean>(false);
+
+  // Merge Shonir Akhra + Dhaka dummy hazards ONLY in Test Mode; Main Mode is 100% real data
+  const hazards = useMemo(() => {
+    if (appMode === 'main') {
+      return liveHazards;
+    }
+    const existingIds = new Set(liveHazards.map((d) => d.id));
+    return [
+      ...liveHazards,
+      ...DHAKA_SEED_HAZARDS.filter((s) => !existingIds.has(s.id)),
+    ];
+  }, [appMode, liveHazards]);
+
+  const setHazards = setLiveHazards;
 
   // Auth & Citizen Reputation State (FR-04 backend-synced device trust)
   const [currentUser, setCurrentUser] = useState<AuthUser | null>(null);
@@ -454,20 +474,11 @@ export default function MapScreen() {
   const loadHazards = useCallback(async () => {
     try {
       const data = await fetchHazards();
-      if (Array.isArray(data) && data.length >= 8) {
-        setHazards(data);
-      } else if (Array.isArray(data) && data.length > 0) {
-        const existingIds = new Set(data.map((d) => d.id));
-        const merged = [
-          ...data,
-          ...DHAKA_SEED_HAZARDS.filter((s) => !existingIds.has(s.id)),
-        ];
-        setHazards(merged);
-      } else {
-        setHazards(DHAKA_SEED_HAZARDS);
+      if (Array.isArray(data)) {
+        setLiveHazards(data);
       }
     } catch {
-      setHazards((prev) => (prev.length > 0 ? prev : DHAKA_SEED_HAZARDS));
+      // Keep existing liveHazards on transient network error
     }
   }, []);
 
@@ -647,7 +658,7 @@ export default function MapScreen() {
     [isNighttime, sendProximityLocalNotification, speakProximityWarning],
   );
 
-  // Watch live GPS foreground updates for automatic 100m proximity geofencing & accuracy checks
+  // Watch live GPS foreground updates + immediately center on user's REAL location on startup
   useEffect(() => {
     let sub: Location.LocationSubscription | null = null;
     let mounted = true;
@@ -656,6 +667,27 @@ export default function MapScreen() {
       try {
         const perm = await Location.requestForegroundPermissionsAsync();
         if (!perm.granted || !mounted) return;
+
+        // Immediate initial real GPS fix so map centers on user's actual neighborhood (e.g. Shonir Akhra)
+        try {
+          const initialPos = await Location.getCurrentPositionAsync({
+            accuracy: Location.Accuracy.Balanced,
+          });
+          if (mounted && initialPos?.coords) {
+            const realCoords = {
+              latitude: initialPos.coords.latitude,
+              longitude: initialPos.coords.longitude,
+            };
+            setUserLocation(realCoords);
+            setMapCenter(realCoords);
+            setHasRealGpsFix(true);
+            if (typeof initialPos.coords.accuracy === 'number') {
+              setGpsAccuracyMeters(initialPos.coords.accuracy);
+            }
+          }
+        } catch {
+          // Will use watchPositionAsync update below
+        }
 
         sub = await Location.watchPositionAsync(
           {
@@ -670,6 +702,7 @@ export default function MapScreen() {
               longitude: loc.coords.longitude,
             };
             setUserLocation(nextCoords);
+            setHasRealGpsFix(true);
             if (typeof loc.coords.accuracy === 'number') {
               setGpsAccuracyMeters(loc.coords.accuracy);
               if (loc.coords.accuracy <= 50) {
@@ -691,6 +724,17 @@ export default function MapScreen() {
       sub?.remove();
     };
   }, []);
+
+  // Once WebView is ready and we have a real GPS fix, center map smoothly on the user's real location
+  useEffect(() => {
+    if (!webViewReady || !hasRealGpsFix || hasCenteredRealGps || !webViewRef.current) {
+      return;
+    }
+    setHasCenteredRealGps(true);
+    webViewRef.current.injectJavaScript(
+      `window.focusUserLocation && window.focusUserLocation(${userLocation.latitude}, ${userLocation.longitude}, 15); true;`,
+    );
+  }, [webViewReady, hasRealGpsFix, hasCenteredRealGps, userLocation]);
 
   // Re-evaluate proximity whenever userLocation or active hazards change
   useEffect(() => {
@@ -1390,11 +1434,31 @@ export default function MapScreen() {
     webViewRef.current?.injectJavaScript('map.zoomOut(); true;');
   };
 
-  const handleLocate = () => {
-    setMapCenter(DHAKA_CENTER);
-    setUserLocation(DHAKA_CENTER);
+  const handleLocate = async () => {
+    try {
+      const perm = await Location.requestForegroundPermissionsAsync();
+      if (perm.granted) {
+        const pos = await Location.getCurrentPositionAsync({
+          accuracy: Location.Accuracy.Balanced,
+        });
+        const realCoords = {
+          latitude: pos.coords.latitude,
+          longitude: pos.coords.longitude,
+        };
+        setUserLocation(realCoords);
+        setMapCenter(realCoords);
+        setHasRealGpsFix(true);
+        webViewRef.current?.injectJavaScript(
+          `window.focusUserLocation && window.focusUserLocation(${realCoords.latitude}, ${realCoords.longitude}, 16); true;`,
+        );
+        return;
+      }
+    } catch {
+      // Fallback below
+    }
+    setMapCenter(userLocation);
     webViewRef.current?.injectJavaScript(
-      'window.recenterDhaka && window.recenterDhaka(); true;',
+      `window.focusUserLocation && window.focusUserLocation(${userLocation.latitude}, ${userLocation.longitude}, 15); true;`,
     );
   };
 
@@ -1470,11 +1534,28 @@ export default function MapScreen() {
             {copy.title}
           </Text>
           <View style={styles.headerRight}>
-            {demoMode && (
-              <View style={styles.demoBadge}>
-                <Text style={styles.demoBadgeText}>DEMO</Text>
-              </View>
-            )}
+            <TouchableOpacity
+              style={[
+                styles.demoBadge,
+                appMode === 'main' && {
+                  backgroundColor: 'rgba(16, 185, 129, 0.18)',
+                  borderColor: '#10B981',
+                },
+              ]}
+              onPress={() =>
+                setAppMode((m) => (m === 'main' ? 'test' : 'main'))
+              }
+              activeOpacity={0.8}
+            >
+              <Text
+                style={[
+                  styles.demoBadgeText,
+                  appMode === 'main' && { color: '#34D399' },
+                ]}
+              >
+                {appMode === 'main' ? 'LIVE' : 'TEST'}
+              </Text>
+            </TouchableOpacity>
 
             {/* Auth & Profile Header Button next to বাংলা pill */}
             <TouchableOpacity
@@ -1881,8 +1962,8 @@ export default function MapScreen() {
             )}
           </TouchableOpacity>
         </View>
-      ) : (
-        /* Discreet Live Demo Proximity Check Pill */
+      ) : demoMode ? (
+        /* Discreet Live Demo Proximity Check Pill (visible in Test Mode only) */
         <TouchableOpacity
           style={[
             styles.testAlertChip,
@@ -1902,7 +1983,7 @@ export default function MapScreen() {
             {locale === 'bn' ? 'টেস্ট অ্যালার্ট' : 'Test Alert'}
           </Text>
         </TouchableOpacity>
-      )}
+      ) : null}
 
       {/* Subtle Low GPS Accuracy Banner (>50m, NFR-18) */}
       {gpsAccuracyMeters !== null &&
@@ -2077,8 +2158,8 @@ export default function MapScreen() {
               backgroundColor: 'rgba(239, 68, 68, 0.2)',
             },
           ]}
-          onPress={handleToggleDangerRings}
-          onLongPress={() => setLayersModalOpen(true)}
+          onPress={() => setLayersModalOpen(true)}
+          onLongPress={handleToggleDangerRings}
           activeOpacity={0.8}
         >
           <MapUiIcon
@@ -2257,13 +2338,40 @@ export default function MapScreen() {
               </Text>
             </TouchableOpacity>
 
+            <TouchableOpacity
+              style={[
+                styles.layersOption,
+                {
+                  backgroundColor: theme.surfaceElevated,
+                  borderColor: theme.borderStrong,
+                },
+                showDangerRings && {
+                  borderColor: '#EF4444',
+                  backgroundColor: 'rgba(239, 68, 68, 0.16)',
+                },
+              ]}
+              onPress={handleToggleDangerRings}
+            >
+              <Text
+                style={[
+                  styles.layersOptionText,
+                  { color: theme.text },
+                  showDangerRings && { color: '#FCA5A5' },
+                ]}
+              >
+                {showDangerRings
+                  ? 'Danger Radius Rings (250m): On'
+                  : 'Danger Radius Rings (250m): Off'}
+              </Text>
+            </TouchableOpacity>
+
             <Text
               style={[
                 styles.layersSectionLabel,
                 { color: theme.textSecondary },
               ]}
             >
-              {copy.devTools}
+              APP MODE
             </Text>
             <TouchableOpacity
               style={[
@@ -2272,21 +2380,51 @@ export default function MapScreen() {
                   backgroundColor: theme.surfaceElevated,
                   borderColor: theme.borderStrong,
                 },
-                demoMode && {
-                  borderColor: theme.primary,
-                  backgroundColor: theme.primarySurface,
+                appMode === 'main' && {
+                  borderColor: '#10B981',
+                  backgroundColor: 'rgba(16, 185, 129, 0.16)',
                 },
               ]}
-              onPress={() => setDemoMode((v) => !v)}
+              onPress={() => {
+                setAppMode('main');
+                setLayersModalOpen(false);
+              }}
             >
               <Text
                 style={[
                   styles.layersOptionText,
                   { color: theme.text },
-                  demoMode && { color: theme.primaryText },
+                  appMode === 'main' && { color: '#34D399' },
                 ]}
               >
-                {demoMode ? 'Demo Mode: On' : 'Demo Mode: Off'}
+                🟢 Main Mode (Real GPS & Live DB)
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[
+                styles.layersOption,
+                {
+                  backgroundColor: theme.surfaceElevated,
+                  borderColor: theme.borderStrong,
+                },
+                appMode === 'test' && {
+                  borderColor: '#F59E0B',
+                  backgroundColor: 'rgba(245, 158, 11, 0.16)',
+                },
+              ]}
+              onPress={() => {
+                setAppMode('test');
+                setLayersModalOpen(false);
+              }}
+            >
+              <Text
+                style={[
+                  styles.layersOptionText,
+                  { color: theme.text },
+                  appMode === 'test' && { color: '#FBBF24' },
+                ]}
+              >
+                🧪 Test Mode (Shonir Akhra + Demo)
               </Text>
             </TouchableOpacity>
           </TouchableOpacity>
@@ -2906,6 +3044,32 @@ export default function MapScreen() {
                 )}
               </TouchableOpacity>
             </View>
+
+            <TouchableOpacity
+              style={[
+                styles.tappedRouteBtn,
+                {
+                  marginTop: 6,
+                  borderColor: theme.borderStrong,
+                  backgroundColor: theme.surfaceElevated,
+                },
+              ]}
+              onPress={() => setDetailsHazardId(selectedHazard.id)}
+              activeOpacity={0.85}
+            >
+              <Text
+                style={[styles.tappedRouteBtnText, { color: theme.text }]}
+                numberOfLines={1}
+              >
+                {selectedHazard.category === 'unsafe_footbridge'
+                  ? locale === 'bn'
+                    ? '🌉 বিস্তারিত ও ফুটব্রিজ বনাম জেব্রা তুলনা'
+                    : '🌉 View Details & Compare Crossing'
+                  : locale === 'bn'
+                    ? 'বিস্তারিত দেখুন'
+                    : 'View details'}
+              </Text>
+            </TouchableOpacity>
           </View>
         );
       })()}
@@ -2923,8 +3087,42 @@ export default function MapScreen() {
           setAlertsSheetOpen(false);
           clearSafeRoute();
           setSelectedHazardId(hazard.id);
+          setDetailsHazardId(hazard.id);
+        }}
+      />
+
+      <HazardDetailsScreen
+        visible={Boolean(detailsHazardId)}
+        hazard={hazards.find((h) => h.id === detailsHazardId) ?? null}
+        userLocation={userLocation}
+        isTestMode={demoMode}
+        isDark={isNighttime}
+        language={locale}
+        confirming={Boolean(detailsHazardId && confirmingId === detailsHazardId)}
+        resolving={Boolean(detailsHazardId && resolvingId === detailsHazardId)}
+        routeLoading={routeLoading}
+        onClose={() => setDetailsHazardId(null)}
+        onOpenAlerts={() => {
+          setAlertsSheetOpen(true);
+          loadHazards();
+        }}
+        onOpenReport={() => {
+          setFullReportDraft(null);
+          setFullReportVisible(true);
+        }}
+        onConfirm={handleConfirmHazard}
+        onResolve={handleResolveHazard}
+        onFindSafeRoute={(h) =>
+          handleFindSafeRoute(
+            h.latitude,
+            h.longitude,
+            h.landmark_context || CATEGORY_META[h.category]?.name || 'Hazard',
+          )
+        }
+        onFocusOnMap={(h) => {
+          setSelectedHazardId(h.id);
           webViewRef.current?.injectJavaScript(
-            `window.focusHazard && window.focusHazard(${hazard.latitude}, ${hazard.longitude}); true;`,
+            `window.focusHazard && window.focusHazard(${h.latitude}, ${h.longitude}); true;`,
           );
         }}
       />

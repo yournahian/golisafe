@@ -12,7 +12,7 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
+import AppIcon from '../AppIcon';
 
 export interface AuthUser {
   id: string;
@@ -361,7 +361,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                     },
                   ]}
                 >
-                  <Ionicons
+                  <AppIcon
                     name="alert-circle-outline"
                     size={16}
                     color={theme.errorText}
@@ -391,7 +391,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                       },
                     ]}
                   >
-                    <Ionicons
+                    <AppIcon
                       name="person-outline"
                       size={18}
                       color={theme.textSecondary}
@@ -424,7 +424,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                     },
                   ]}
                 >
-                  <Ionicons
+                  <AppIcon
                     name="mail-outline"
                     size={18}
                     color={theme.textSecondary}
@@ -458,7 +458,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                     },
                   ]}
                 >
-                  <Ionicons
+                  <AppIcon
                     name="lock-closed-outline"
                     size={18}
                     color={theme.textSecondary}
@@ -476,7 +476,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                     onPress={() => setShowPassword((v) => !v)}
                     hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                   >
-                    <Ionicons
+                    <AppIcon
                       name={showPassword ? 'eye-off-outline' : 'eye-outline'}
                       size={18}
                       color={theme.textSecondary}
@@ -500,7 +500,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                   <ActivityIndicator size="small" color="#FFFFFF" />
                 ) : (
                   <>
-                    <Ionicons
+                    <AppIcon
                       name={
                         activeTab === 'login'
                           ? 'log-in-outline'
@@ -551,7 +551,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                 onPress={handleGuestContinue}
                 activeOpacity={0.8}
               >
-                <Ionicons
+                <AppIcon
                   name="shield-outline"
                   size={18}
                   color={theme.guestBtnText}

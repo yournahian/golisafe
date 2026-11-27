@@ -1,14 +1,16 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useState } from 'react';
 import {
   FlatList,
   Image,
   Modal,
+  Platform,
+  ScrollView,
   StyleSheet,
   Text,
   TouchableOpacity,
   View,
 } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
+import AppIcon from '../AppIcon';
 import type {
   HazardCategory,
   HazardRecord,
@@ -137,6 +139,14 @@ export const AlertsModal: React.FC<AlertsModalProps> = ({
         else if (h.severity === 'Medium') score += 50;
         else score += 10;
 
+        // Night priority boost for unlit alleys & unsafe footbridges (FR-21)
+        if (
+          isDark &&
+          (h.category === 'unlit_alley' || h.category === 'unsafe_footbridge')
+        ) {
+          score += 45;
+        }
+
         // Verified bonus weighting
         if (h.status === 'crowd_verified') score += 30;
         return score;
@@ -150,7 +160,14 @@ export const AlertsModal: React.FC<AlertsModalProps> = ({
       const timeB = b.created_at ? new Date(b.created_at).getTime() : 0;
       return timeB - timeA;
     });
-  }, [hazards]);
+  }, [hazards, isDark]);
+
+  const [selectedCat, setSelectedCat] = useState<'all' | HazardCategory>('all');
+
+  const visibleHazards = useMemo(() => {
+    if (selectedCat === 'all') return sortedHazards;
+    return sortedHazards.filter((h) => h.category === selectedCat);
+  }, [sortedHazards, selectedCat]);
 
   const theme = useMemo(() => {
     if (isDark) {
@@ -314,14 +331,94 @@ export const AlertsModal: React.FC<AlertsModalProps> = ({
             </TouchableOpacity>
           </View>
 
+          {/* Category Filter Chips + Night Priority Banner (Figma Nearby Alerts) */}
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={{
+              paddingHorizontal: 16,
+              paddingTop: 10,
+              paddingBottom: 6,
+              gap: 8,
+            }}
+          >
+            {(
+              [
+                'all',
+                'extortion_spot',
+                'unlit_alley',
+                'waterlogging',
+                'pothole_manhole',
+                'unsafe_footbridge',
+              ] as const
+            ).map((cat) => {
+              const active = selectedCat === cat;
+              const label =
+                cat === 'all'
+                  ? language === 'bn'
+                    ? 'সব'
+                    : 'All'
+                  : language === 'bn'
+                    ? CATEGORY_META[cat].nameBn
+                    : CATEGORY_META[cat].name;
+              return (
+                <TouchableOpacity
+                  key={cat}
+                  onPress={() => setSelectedCat(cat)}
+                  style={{
+                    paddingHorizontal: 11,
+                    paddingVertical: 6,
+                    borderRadius: 999,
+                    borderWidth: 1,
+                    borderColor: active ? '#3B82F6' : theme.cardBorder,
+                    backgroundColor: active
+                      ? 'rgba(59, 130, 246, 0.2)'
+                      : theme.cardBg,
+                  }}
+                >
+                  <Text
+                    style={{
+                      fontSize: 11.5,
+                      fontWeight: active ? '700' : '600',
+                      color: active ? '#93C5FD' : theme.textSecondary,
+                    }}
+                  >
+                    {label}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </ScrollView>
+
+          {isDark && (
+            <View
+              style={{
+                marginHorizontal: 16,
+                marginBottom: 6,
+                paddingHorizontal: 10,
+                paddingVertical: 6,
+                borderRadius: 10,
+                backgroundColor: 'rgba(168, 85, 247, 0.16)',
+                borderWidth: 1,
+                borderColor: 'rgba(168, 85, 247, 0.35)',
+              }}
+            >
+              <Text style={{ color: '#E9D5FF', fontSize: 11, fontWeight: '600' }}>
+                {language === 'bn'
+                  ? '🌙 নাইট মোড সক্রিয়: অন্ধকার গলি ও ফুটব্রিজ সতর্কতা অগ্রাধিকার পাচ্ছে।'
+                  : '🌙 Night mode active: Unlit alley & footbridge alerts prioritized.'}
+              </Text>
+            </View>
+          )}
+
           <FlatList
-            data={sortedHazards}
+            data={visibleHazards}
             keyExtractor={(item) => item.id}
             contentContainerStyle={styles.listContent}
             showsVerticalScrollIndicator={false}
             ListEmptyComponent={
               <View style={styles.emptyContainer}>
-                <Ionicons
+                <AppIcon
                   name="shield-checkmark-outline"
                   size={48}
                   color={theme.emptyIconColor}
@@ -399,7 +496,7 @@ export const AlertsModal: React.FC<AlertsModalProps> = ({
                             },
                           ]}
                         >
-                          <Ionicons
+                          <AppIcon
                             name="checkmark-circle"
                             size={12}
                             color={theme.verifiedText}
@@ -472,7 +569,7 @@ export const AlertsModal: React.FC<AlertsModalProps> = ({
                         resizeMode="cover"
                       />
                       <View style={styles.imageOverlayBadge}>
-                        <Ionicons name="camera" size={11} color="#FFFFFF" />
+                        <AppIcon name="camera" size={11} color="#FFFFFF" />
                         <Text style={styles.imageOverlayText}>
                           {language === 'bn' ? 'ছবির প্রমাণ' : 'Photo Evidence'}
                         </Text>
@@ -483,7 +580,7 @@ export const AlertsModal: React.FC<AlertsModalProps> = ({
                   {/* Details / Confirmation / Coords Row */}
                   <View style={styles.metaRow}>
                     <View style={styles.metaItem}>
-                      <Ionicons
+                      <AppIcon
                         name="people-outline"
                         size={13}
                         color={theme.textSecondary}
@@ -508,7 +605,7 @@ export const AlertsModal: React.FC<AlertsModalProps> = ({
                     </Text>
 
                     <View style={styles.metaItem}>
-                      <Ionicons
+                      <AppIcon
                         name="compass-outline"
                         size={13}
                         color={theme.textSecondary}
@@ -536,7 +633,7 @@ export const AlertsModal: React.FC<AlertsModalProps> = ({
                     onPress={() => handleLocate(item)}
                     activeOpacity={0.85}
                   >
-                    <Ionicons
+                    <AppIcon
                       name="location-sharp"
                       size={15}
                       color={theme.locateBtnText}
