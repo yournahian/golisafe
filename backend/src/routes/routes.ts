@@ -188,17 +188,15 @@ function evaluateRouteRisk(
   const endPt = coords[coords.length - 1];
 
   for (const hazard of activeHazards) {
-    // Ignore hazards sitting directly on the exact start or destination pin (< 15m)
-    if (
-      endPt &&
-      haversineDistanceMeters(hazard.latitude, hazard.longitude, endPt[0], endPt[1]) < 15
-    ) {
-      continue;
-    }
-    if (
-      startPt &&
-      haversineDistanceMeters(hazard.latitude, hazard.longitude, startPt[0], startPt[1]) < 15
-    ) {
+    const distToEnd = endPt
+      ? haversineDistanceMeters(hazard.latitude, hazard.longitude, endPt[0], endPt[1])
+      : 99999;
+    const distToStart = startPt
+      ? haversineDistanceMeters(hazard.latitude, hazard.longitude, startPt[0], startPt[1])
+      : 99999;
+
+    // Only skip if user tapped literally ON top of the hazard (< 4m)
+    if (distToEnd < 4 || distToStart < 4) {
       continue;
     }
 
@@ -212,8 +210,13 @@ function evaluateRouteRisk(
       minClearanceMeters = minDistance;
     }
 
-    // Tight street-level direct hit (<= 18m): hazard is actually on this street/alley
-    if (minDistance <= 18) {
+    // Tight street-level direct hit (<= 14m): hazard is on this street/alley.
+    // If hazard is near start/end (< 20m), only count as a hit when the route actually
+    // walks CLOSER to (i.e. crosses over) the hazard than the endpoint itself!
+    const crossesNearEnd = distToEnd < 20 ? minDistance < distToEnd - 3 : true;
+    const crossesNearStart = distToStart < 20 ? minDistance < distToStart - 3 : true;
+
+    if (minDistance <= 14 && crossesNearEnd && crossesNearStart) {
       hazardsNearRoute++;
       blockingHazards.push(hazard);
       const sev = (hazard.severity || '').toString().toLowerCase();

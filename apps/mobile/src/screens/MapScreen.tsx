@@ -455,6 +455,11 @@ export default function MapScreen() {
   const layerToastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastNotifiedHazardRef = useRef<string | null>(null);
   const dismissedProximityIdsRef = useRef<Set<string>>(new Set());
+  const lastGoodGpsRef = useRef<{
+    latitude: number;
+    longitude: number;
+    accuracy: number;
+  } | null>(null);
 
   const theme = isNighttime ? DARK_THEME : LIGHT_THEME;
   const copy = UI_COPY[locale];
@@ -692,6 +697,11 @@ export default function MapScreen() {
               latitude: initialPos.coords.latitude,
               longitude: initialPos.coords.longitude,
             };
+            const acc =
+              typeof initialPos.coords.accuracy === 'number'
+                ? initialPos.coords.accuracy
+                : 30;
+            lastGoodGpsRef.current = { ...realCoords, accuracy: acc };
             setUserLocation(realCoords);
             setMapCenter(realCoords);
             setHasRealGpsFix(true);
@@ -706,8 +716,8 @@ export default function MapScreen() {
         sub = await Location.watchPositionAsync(
           {
             accuracy: Location.Accuracy.High,
-            distanceInterval: 10,
-            timeInterval: 6000,
+            distanceInterval: 15,
+            timeInterval: 8000,
           },
           (loc) => {
             if (!mounted) return;
@@ -715,14 +725,37 @@ export default function MapScreen() {
               latitude: loc.coords.latitude,
               longitude: loc.coords.longitude,
             };
-            setUserLocation(nextCoords);
-            setHasRealGpsFix(true);
+            const acc =
+              typeof loc.coords.accuracy === 'number'
+                ? loc.coords.accuracy
+                : 50;
+
             if (typeof loc.coords.accuracy === 'number') {
               setGpsAccuracyMeters(loc.coords.accuracy);
               if (loc.coords.accuracy <= 120) {
                 setGpsBannerDismissed(false);
               }
             }
+
+            // Indoor GPS jitter filter: ignore noisy low-accuracy spikes or sub-uncertainty drift
+            const prev = lastGoodGpsRef.current;
+            if (prev) {
+              const jumpMeters = computeDistanceMeters(
+                prev.latitude,
+                prev.longitude,
+                nextCoords.latitude,
+                nextCoords.longitude,
+              );
+              const isNoisySpike = acc > 45 && acc > prev.accuracy * 1.35;
+              const isIndoorDrift = jumpMeters < Math.max(20, acc * 0.8);
+              if (isNoisySpike || isIndoorDrift) {
+                return;
+              }
+            }
+
+            lastGoodGpsRef.current = { ...nextCoords, accuracy: acc };
+            setUserLocation(nextCoords);
+            setHasRealGpsFix(true);
             webViewRef.current?.injectJavaScript(
               `window.updateUserLocation && window.updateUserLocation(${nextCoords.latitude}, ${nextCoords.longitude}); true;`,
             );
@@ -1991,10 +2024,18 @@ export default function MapScreen() {
                 );
               }
 
+              const cleanedContext = (h.landmark_context || '')
+                .replace(/\[Ambient Light:[^\]]*\]/gi, '')
+                .trim();
+              const bypassTargetName =
+                cleanedContext ||
+                (locale === 'bn'
+                  ? CATEGORY_META[h.category]?.nameBn
+                  : CATEGORY_META[h.category]?.name);
               const bypassLabel =
                 locale === 'bn'
-                  ? `নিরাপদ বিকল্প (${h.landmark_context || CATEGORY_META[h.category]?.nameBn})`
-                  : `Safe Bypass (${h.landmark_context || CATEGORY_META[h.category]?.name})`;
+                  ? `নিরাপদ বিকল্প (${bypassTargetName})`
+                  : `Safe Bypass (${bypassTargetName})`;
               handleFindSafeRoute(destLat, destLng, bypassLabel);
             }}
           >

@@ -129,16 +129,14 @@ function scorePolylineRisk(
 
   for (const hazard of hazards) {
     if (hazard.status === 'resolved' || hazard.status === 'expired') continue;
-    if (
-      endPt &&
-      haversineMeters(hazard.latitude, hazard.longitude, endPt[0], endPt[1]) < 15
-    ) {
-      continue;
-    }
-    if (
-      startPt &&
-      haversineMeters(hazard.latitude, hazard.longitude, startPt[0], startPt[1]) < 15
-    ) {
+    const distToEnd = endPt
+      ? haversineMeters(hazard.latitude, hazard.longitude, endPt[0], endPt[1])
+      : 99999;
+    const distToStart = startPt
+      ? haversineMeters(hazard.latitude, hazard.longitude, startPt[0], startPt[1])
+      : 99999;
+
+    if (distToEnd < 4 || distToStart < 4) {
       continue;
     }
 
@@ -148,8 +146,11 @@ function scorePolylineRisk(
       coords,
     );
 
-    // Tight street-level hit radius (<= 18m) so side-alley hazards don't penalize main roads
-    if (minDistance <= 18) {
+    const crossesNearEnd = distToEnd < 20 ? minDistance < distToEnd - 3 : true;
+    const crossesNearStart = distToStart < 20 ? minDistance < distToStart - 3 : true;
+
+    // Tight street-level hit radius (<= 14m) with directional endpoint check
+    if (minDistance <= 14 && crossesNearEnd && crossesNearStart) {
       hazardsNearRoute += 1;
       blockingHazards.push(hazard);
       const sev = (hazard.severity || '').toLowerCase();
