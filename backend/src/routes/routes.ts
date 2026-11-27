@@ -100,51 +100,122 @@ async function getActiveHazards(): Promise<HazardRecord[]> {
 }
 
 /**
- * Calculates micro-hazard risk score and minimum hazard clearance for a polyline.
- * Uses tight street-level hit radius (<= 45m) so parallel-street detours genuinely
- * score Risk 0 instead of tying with the direct hazard-blocked street.
+ * Computes exact perpendicular distance in meters from point (pLat, pLng)
+ * to line segment (aLat, aLng) -> (bLat, bLng) using local equirectangular projection.
+ */
+function pointToSegmentDistanceMeters(
+  pLat: number,
+  pLng: number,
+  aLat: number,
+  aLng: number,
+  bLat: number,
+  bLng: number
+): number {
+  const cosLat = Math.cos(((aLat + bLat) * 0.5 * Math.PI) / 180);
+  const metersPerDegLat = 111320;
+  const metersPerDegLng = 111320 * cosLat;
+
+  const ax = (aLng - pLng) * metersPerDegLng;
+  const ay = (aLat - pLat) * metersPerDegLat;
+  const bx = (bLng - pLng) * metersPerDegLng;
+  const by = (bLat - pLat) * metersPerDegLat;
+
+  const dx = bx - ax;
+  const dy = by - ay;
+  const lenSq = dx * dx + dy * dy;
+
+  if (lenSq < 1e-6) {
+    return Math.round(Math.sqrt(ax * ax + ay * ay));
+  }
+
+  let t = -(ax * dx + ay * dy) / lenSq;
+  if (t < 0) t = 0;
+  else if (t > 1) t = 1;
+
+  const closestX = ax + t * dx;
+  const closestY = ay + t * dy;
+  return Math.round(Math.sqrt(closestX * closestX + closestY * closestY));
+}
+
+/**
+ * Computes minimum distance in meters from a point to a polyline (checking all segments).
+ */
+function pointToPolylineDistanceMeters(
+  pLat: number,
+  pLng: number,
+  coords: Array<[number, number]>
+): number {
+  if (coords.length === 0) return 99999;
+  if (coords.length === 1) {
+    return haversineDistanceMeters(pLat, pLng, coords[0][0], coords[0][1]);
+  }
+  let minD = Infinity;
+  for (let i = 0; i < coords.length - 1; i++) {
+    const d = pointToSegmentDistanceMeters(
+      pLat,
+      pLng,
+      coords[i][0],
+      coords[i][1],
+      coords[i + 1][0],
+      coords[i + 1][1]
+    );
+    if (d < minD) minD = d;
+  }
+  return minD;
+}
+
+/**
+ * Calculates micro-hazard risk score and blocking hazards for a polyline.
+ * Uses exact point-to-segment distance with a tight street-width hit radius (<= 18m)
+ * so hazards inside an adjacent side alley (~25-35m away) do NOT falsely penalize
+ * a clean main road, while hazards directly on the traversed street/alley are caught.
  */
 function evaluateRouteRisk(
   coords: Array<[number, number]>,
   activeHazards: HazardRecord[]
-): { riskScore: number; hazardsNearRoute: number; minClearanceMeters: number } {
+): {
+  riskScore: number;
+  hazardsNearRoute: number;
+  minClearanceMeters: number;
+  blockingHazards: HazardRecord[];
+} {
   let riskScore = 0;
   let hazardsNearRoute = 0;
   let minClearanceMeters = 99999;
+  const blockingHazards: HazardRecord[] = [];
 
-  // Skip the very first/last endpoint if user starts/ends right beside a hazard
-  // so only the actual road path taken determines whether the route passes through the hazard
   const startPt = coords[0];
   const endPt = coords[coords.length - 1];
-  const interiorCoords =
-    coords.length > 3
-      ? coords.slice(1, coords.length - 1)
-      : coords;
 
   for (const hazard of activeHazards) {
-    // Ignore hazards sitting directly on the exact destination point (< 20m)
+    // Ignore hazards sitting directly on the exact start or destination pin (< 15m)
     if (
       endPt &&
-      haversineDistanceMeters(hazard.latitude, hazard.longitude, endPt[0], endPt[1]) < 20
+      haversineDistanceMeters(hazard.latitude, hazard.longitude, endPt[0], endPt[1]) < 15
+    ) {
+      continue;
+    }
+    if (
+      startPt &&
+      haversineDistanceMeters(hazard.latitude, hazard.longitude, startPt[0], startPt[1]) < 15
     ) {
       continue;
     }
 
-    let minDistance = Infinity;
-    for (const [lat, lng] of interiorCoords) {
-      const d = haversineDistanceMeters(hazard.latitude, hazard.longitude, lat, lng);
-      if (d < minDistance) {
-        minDistance = d;
-      }
-    }
+    const minDistance = pointToPolylineDistanceMeters(
+      hazard.latitude,
+      hazard.longitude,
+      coords
+    );
 
     if (minDistance < minClearanceMeters) {
       minClearanceMeters = minDistance;
     }
 
-    // Street-level direct hit (<= 45m): full severity risk penalty
-    if (minDistance <= 45) {
+    // Tight street-level direct hit (<= 18m): hazard is actually on this street/alley
+    if (minDistance <= 18) {
       hazardsNearRoute++;
+      blockingHazards.push(hazard);
       const sev = (hazard.severity || '').toString().toLowerCase();
       if (sev === 'critical' || sev === 'high') {
         riskScore += 30;
@@ -155,18 +226,10 @@ function evaluateRouteRisk(
       } else {
         riskScore += 10;
       }
-    } else if (
-      minDistance <= 85 &&
-      startPt &&
-      haversineDistanceMeters(hazard.latitude, hazard.longitude, startPt[0], startPt[1]) > 60
-    ) {
-      // Secondary proximity penalty only if route approaches a distant hazard closely
-      hazardsNearRoute++;
-      riskScore += 5;
     }
   }
 
-  return { riskScore, hazardsNearRoute, minClearanceMeters };
+  return { riskScore, hazardsNearRoute, minClearanceMeters, blockingHazards };
 }
 
 /**
@@ -227,15 +290,18 @@ async function fetchOsrmViaRoute(
 }
 
 /**
- * Generates real street-following left/right side-street bypass routes via OSRM
- * when the direct route passes near hazards or when OSRM only returned 1 route.
+ * Generates real street-following side-street and block-wrap bypass routes via OSRM
+ * ONLY when all direct routes hit a hazard (riskScore > 0).
+ * Tests multiple perpendicular offsets (~85m, ~165m) plus far-side block-wrap corners
+ * around the blocking hazard so dense Dhaka parallel alleys (like Shonir Akhra) are found.
  */
 async function generateRealStreetDetours(
   sLat: number,
   sLng: number,
   eLat: number,
   eLng: number,
-  activeHazards: HazardRecord[]
+  activeHazards: HazardRecord[],
+  blockingHazards: HazardRecord[] = []
 ): Promise<
   Array<{
     coordinates: Array<[number, number]>;
@@ -245,40 +311,65 @@ async function generateRealStreetDetours(
     hazardsNearRoute: number;
   }>
 > {
-  const midLat = (sLat + eLat) / 2;
-  const midLng = (sLng + eLng) / 2;
+  const anchorLat =
+    blockingHazards.length > 0
+      ? blockingHazards[0].latitude
+      : (sLat + eLat) / 2;
+  const anchorLng =
+    blockingHazards.length > 0
+      ? blockingHazards[0].longitude
+      : (sLng + eLng) / 2;
+
   const dLat = eLat - sLat;
   const dLng = eLng - sLng;
-  const len = Math.sqrt(dLat * dLat + dLng * dLng) || 0.002;
-  // ~140m–180m perpendicular offset into parallel goli/street
-  const offsetDeg = Math.min(0.0022, Math.max(0.0013, len * 0.45));
-  const perpLat = (-dLng / len) * offsetDeg;
-  const perpLng = (dLat / len) * offsetDeg;
+  const len = Math.sqrt(dLat * dLat + dLng * dLng) || 0.0015;
+  const fwdLat = dLat / len;
+  const fwdLng = dLng / len;
+  const perpLatUnit = -fwdLng;
+  const perpLngUnit = fwdLat;
 
-  const [leftRoute, rightRoute] = await Promise.all([
-    fetchOsrmViaRoute(
-      sLat,
-      sLng,
-      Number((midLat + perpLat).toFixed(6)),
-      Number((midLng + perpLng).toFixed(6)),
-      eLat,
-      eLng,
-      activeHazards
-    ),
-    fetchOsrmViaRoute(
-      sLat,
-      sLng,
-      Number((midLat - perpLat).toFixed(6)),
-      Number((midLng - perpLng).toFixed(6)),
-      eLat,
-      eLng,
-      activeHazards
-    ),
-  ]);
+  const nearOffset = 0.0008; // ~85m (adjacent parallel goli)
+  const midOffset = Math.min(0.002, Math.max(0.0015, len * 0.45)); // ~165m
+  const wrapPerp = 0.0009; // ~95m sideways off the blocked alley
+  const wrapFwd = 0.0015; // ~165m past destination to catch eastern/far connector street
 
-  return [leftRoute, rightRoute].filter(
-    (r): r is NonNullable<typeof r> => r !== null
+  const viaPoints: Array<[number, number]> = [
+    // Adjacent parallel street left/right of blocking hazard
+    [
+      Number((anchorLat + perpLatUnit * nearOffset).toFixed(6)),
+      Number((anchorLng + perpLngUnit * nearOffset).toFixed(6)),
+    ],
+    [
+      Number((anchorLat - perpLatUnit * nearOffset).toFixed(6)),
+      Number((anchorLng - perpLngUnit * nearOffset).toFixed(6)),
+    ],
+    // Wider parallel street left/right
+    [
+      Number((anchorLat + perpLatUnit * midOffset).toFixed(6)),
+      Number((anchorLng + perpLngUnit * midOffset).toFixed(6)),
+    ],
+    [
+      Number((anchorLat - perpLatUnit * midOffset).toFixed(6)),
+      Number((anchorLng - perpLngUnit * midOffset).toFixed(6)),
+    ],
+    // Far-side block-wrap corners (enters destination from opposite end of the alley)
+    [
+      Number((eLat + perpLatUnit * wrapPerp + fwdLat * wrapFwd).toFixed(6)),
+      Number((eLng + perpLngUnit * wrapPerp + fwdLng * wrapFwd).toFixed(6)),
+    ],
+    [
+      Number((eLat - perpLatUnit * wrapPerp + fwdLat * wrapFwd).toFixed(6)),
+      Number((eLng - perpLngUnit * wrapPerp + fwdLng * wrapFwd).toFixed(6)),
+    ],
+  ];
+
+  const results = await Promise.all(
+    viaPoints.map(([vLat, vLng]) =>
+      fetchOsrmViaRoute(sLat, sLng, vLat, vLng, eLat, eLng, activeHazards)
+    )
   );
+
+  return results.filter((r): r is NonNullable<typeof r> => r !== null);
 }
 
 /**
@@ -365,18 +456,20 @@ router.get('/safe', async (req: Request, res: Response) => {
     // OSRM timed out or failed; will trigger fallback below
   }
 
-  // If OSRM returned 1 route OR the primary route hits hazards, query real adjacent-street OSRM bypasses
-  if (
-    evaluatedRoutes.length === 1 ||
-    (evaluatedRoutes.length > 0 &&
-      evaluatedRoutes.every((r) => r.riskScore > 0))
-  ) {
+  let blockingHazardsForDetour: HazardRecord[] = [];
+  if (evaluatedRoutes.length > 0 && evaluatedRoutes.every((r) => r.riskScore > 0)) {
+    const primaryRisk = evaluateRouteRisk(
+      evaluatedRoutes[0].coordinates,
+      activeHazards
+    );
+    blockingHazardsForDetour = primaryRisk.blockingHazards;
     const streetDetours = await generateRealStreetDetours(
       sLat,
       sLng,
       eLat,
       eLng,
-      activeHazards
+      activeHazards,
+      blockingHazardsForDetour
     );
     evaluatedRoutes.push(...streetDetours);
   }

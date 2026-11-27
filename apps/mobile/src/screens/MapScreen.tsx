@@ -454,6 +454,7 @@ export default function MapScreen() {
   const webViewRef = useRef<WebView>(null);
   const layerToastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastNotifiedHazardRef = useRef<string | null>(null);
+  const dismissedProximityIdsRef = useRef<Set<string>>(new Set());
 
   const theme = isNighttime ? DARK_THEME : LIGHT_THEME;
   const copy = UI_COPY[locale];
@@ -637,6 +638,9 @@ export default function MapScreen() {
       }
 
       if (chosen && chosenDist <= PROXIMITY_RADIUS_METERS) {
+        if (!forceNotify && dismissedProximityIdsRef.current.has(chosen.id)) {
+          return null;
+        }
         const distRounded = Math.max(10, Math.min(PROXIMITY_RADIUS_METERS, chosenDist));
         const alertObj: ProximityAlertState = {
           hazard: chosen,
@@ -1942,6 +1946,7 @@ export default function MapScreen() {
               style={styles.proximityBannerClose}
               onPress={() => {
                 Speech.stop();
+                dismissedProximityIdsRef.current.add(proximityAlert.hazard.id);
                 setProximityAlert(null);
               }}
               hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
@@ -1956,17 +1961,40 @@ export default function MapScreen() {
             disabled={routeLoading}
             onPress={() => {
               const h = proximityAlert.hazard;
-              // Compute a safe bypass destination ~350m beyond the hazard along current approach
+              dismissedProximityIdsRef.current.add(h.id);
+              setProximityAlert(null);
+
+              // If the user already tapped a destination on the map, route there safely
+              if (tappedLocation) {
+                handleFindSafeRoute(
+                  tappedLocation.latitude,
+                  tappedLocation.longitude,
+                  tappedLocation.label,
+                );
+                return;
+              }
+
+              // Otherwise project ~200m along the dominant corridor axis from user's road
+              // (avoids shooting diagonally into random residential dead-ends)
               const dLat = h.latitude - userLocation.latitude;
               const dLng = h.longitude - userLocation.longitude;
-              const mag = Math.sqrt(dLat * dLat + dLng * dLng) || 0.001;
-              const destLat = Number((h.latitude + (dLat / mag) * 0.0032).toFixed(6));
-              const destLng = Number((h.longitude + (dLng / mag) * 0.0032).toFixed(6));
+              const stepDeg = 0.0018; // ~200m
+              let destLat = userLocation.latitude;
+              let destLng = userLocation.longitude;
+              if (Math.abs(dLat) >= Math.abs(dLng)) {
+                destLat = Number(
+                  (userLocation.latitude + (dLat >= 0 ? stepDeg : -stepDeg)).toFixed(6),
+                );
+              } else {
+                destLng = Number(
+                  (userLocation.longitude + (dLng >= 0 ? stepDeg : -stepDeg)).toFixed(6),
+                );
+              }
+
               const bypassLabel =
                 locale === 'bn'
                   ? `নিরাপদ বিকল্প (${h.landmark_context || CATEGORY_META[h.category]?.nameBn})`
                   : `Safe Bypass (${h.landmark_context || CATEGORY_META[h.category]?.name})`;
-              setProximityAlert(null);
               handleFindSafeRoute(destLat, destLng, bypassLabel);
             }}
           >

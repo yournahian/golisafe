@@ -58,38 +58,100 @@ function polylineDistanceMeters(coords: Array<[number, number]>): number {
   return Math.round(total);
 }
 
+function pointToSegmentDistanceMeters(
+  pLat: number,
+  pLng: number,
+  aLat: number,
+  aLng: number,
+  bLat: number,
+  bLng: number,
+): number {
+  const cosLat = Math.cos(((aLat + bLat) * 0.5 * Math.PI) / 180);
+  const metersPerDegLat = 111320;
+  const metersPerDegLng = 111320 * cosLat;
+
+  const ax = (aLng - pLng) * metersPerDegLng;
+  const ay = (aLat - pLat) * metersPerDegLat;
+  const bx = (bLng - pLng) * metersPerDegLng;
+  const by = (bLat - pLat) * metersPerDegLat;
+
+  const dx = bx - ax;
+  const dy = by - ay;
+  const lenSq = dx * dx + dy * dy;
+
+  if (lenSq < 1e-6) {
+    return Math.round(Math.sqrt(ax * ax + ay * ay));
+  }
+
+  let t = -(ax * dx + ay * dy) / lenSq;
+  if (t < 0) t = 0;
+  else if (t > 1) t = 1;
+
+  const closestX = ax + t * dx;
+  const closestY = ay + t * dy;
+  return Math.round(Math.sqrt(closestX * closestX + closestY * closestY));
+}
+
+function pointToPolylineDistanceMeters(
+  pLat: number,
+  pLng: number,
+  coords: Array<[number, number]>,
+): number {
+  if (coords.length === 0) return 99999;
+  if (coords.length === 1) {
+    return haversineMeters(pLat, pLng, coords[0][0], coords[0][1]);
+  }
+  let minD = Number.POSITIVE_INFINITY;
+  for (let i = 0; i < coords.length - 1; i++) {
+    const d = pointToSegmentDistanceMeters(
+      pLat,
+      pLng,
+      coords[i][0],
+      coords[i][1],
+      coords[i + 1][0],
+      coords[i + 1][1],
+    );
+    if (d < minD) minD = d;
+  }
+  return minD;
+}
+
 function scorePolylineRisk(
   coords: Array<[number, number]>,
   hazards: HazardRecord[],
-): { riskScore: number; hazardsNearRoute: number } {
+): { riskScore: number; hazardsNearRoute: number; blockingHazards: HazardRecord[] } {
   let riskScore = 0;
   let hazardsNearRoute = 0;
+  const blockingHazards: HazardRecord[] = [];
 
   const startPt = coords[0];
   const endPt = coords[coords.length - 1];
-  const interiorCoords =
-    coords.length > 3 ? coords.slice(1, coords.length - 1) : coords;
 
   for (const hazard of hazards) {
     if (hazard.status === 'resolved' || hazard.status === 'expired') continue;
     if (
       endPt &&
-      haversineMeters(hazard.latitude, hazard.longitude, endPt[0], endPt[1]) < 20
+      haversineMeters(hazard.latitude, hazard.longitude, endPt[0], endPt[1]) < 15
+    ) {
+      continue;
+    }
+    if (
+      startPt &&
+      haversineMeters(hazard.latitude, hazard.longitude, startPt[0], startPt[1]) < 15
     ) {
       continue;
     }
 
-    let minDistance = Number.POSITIVE_INFINITY;
-    for (const [lat, lng] of interiorCoords) {
-      const d = haversineMeters(hazard.latitude, hazard.longitude, lat, lng);
-      if (d < minDistance) {
-        minDistance = d;
-      }
-    }
+    const minDistance = pointToPolylineDistanceMeters(
+      hazard.latitude,
+      hazard.longitude,
+      coords,
+    );
 
-    // Tight street-level hit radius (<= 45m) so parallel-street detours score Risk 0
-    if (minDistance <= 45) {
+    // Tight street-level hit radius (<= 18m) so side-alley hazards don't penalize main roads
+    if (minDistance <= 18) {
       hazardsNearRoute += 1;
+      blockingHazards.push(hazard);
       const sev = (hazard.severity || '').toLowerCase();
       if (sev === 'critical' || sev === 'high') {
         riskScore += 30;
@@ -98,17 +160,10 @@ function scorePolylineRisk(
       } else {
         riskScore += 5;
       }
-    } else if (
-      minDistance <= 85 &&
-      startPt &&
-      haversineMeters(hazard.latitude, hazard.longitude, startPt[0], startPt[1]) > 60
-    ) {
-      hazardsNearRoute += 1;
-      riskScore += 5;
     }
   }
 
-  return { riskScore, hazardsNearRoute };
+  return { riskScore, hazardsNearRoute, blockingHazards };
 }
 
 function buildFallbackArc(
@@ -526,24 +581,59 @@ export async function fetchSafeRoutes(
     // Fall back to synthetic detour + direct polylines below
   }
 
-  // Also fetch real street-following side-alley bypass routes via OSRM if needed
+  // Fetch real street-following side-alley & block-wrap bypass routes ONLY when all direct routes hit a hazard
   const needsRealDetour =
-    candidates.length === 1 ||
-    (candidates.length > 0 && candidates.every((c) => c.riskScore > 0));
+    candidates.length > 0 && candidates.every((c) => c.riskScore > 0);
 
   if (needsRealDetour) {
-    const midLat = (startLat + endLat) / 2;
-    const midLng = (startLng + endLng) / 2;
+    const primaryRisk = scorePolylineRisk(candidates[0].coordinates, activeHazards);
+    const anchorLat =
+      primaryRisk.blockingHazards.length > 0
+        ? primaryRisk.blockingHazards[0].latitude
+        : (startLat + endLat) / 2;
+    const anchorLng =
+      primaryRisk.blockingHazards.length > 0
+        ? primaryRisk.blockingHazards[0].longitude
+        : (startLng + endLng) / 2;
+
     const dLat = endLat - startLat;
     const dLng = endLng - startLng;
-    const len = Math.sqrt(dLat * dLat + dLng * dLng) || 0.002;
-    const offsetDeg = Math.min(0.0022, Math.max(0.0013, len * 0.45));
-    const perpLat = (-dLng / len) * offsetDeg;
-    const perpLng = (dLat / len) * offsetDeg;
+    const len = Math.sqrt(dLat * dLat + dLng * dLng) || 0.0015;
+    const fwdLat = dLat / len;
+    const fwdLng = dLng / len;
+    const perpLatUnit = -fwdLng;
+    const perpLngUnit = fwdLat;
+
+    const nearOffset = 0.0008;
+    const midOffset = Math.min(0.002, Math.max(0.0015, len * 0.45));
+    const wrapPerp = 0.0009;
+    const wrapFwd = 0.0015;
 
     const viaPoints: Array<[number, number]> = [
-      [Number((midLat + perpLat).toFixed(6)), Number((midLng + perpLng).toFixed(6))],
-      [Number((midLat - perpLat).toFixed(6)), Number((midLng - perpLng).toFixed(6))],
+      [
+        Number((anchorLat + perpLatUnit * nearOffset).toFixed(6)),
+        Number((anchorLng + perpLngUnit * nearOffset).toFixed(6)),
+      ],
+      [
+        Number((anchorLat - perpLatUnit * nearOffset).toFixed(6)),
+        Number((anchorLng - perpLngUnit * nearOffset).toFixed(6)),
+      ],
+      [
+        Number((anchorLat + perpLatUnit * midOffset).toFixed(6)),
+        Number((anchorLng + perpLngUnit * midOffset).toFixed(6)),
+      ],
+      [
+        Number((anchorLat - perpLatUnit * midOffset).toFixed(6)),
+        Number((anchorLng - perpLngUnit * midOffset).toFixed(6)),
+      ],
+      [
+        Number((endLat + perpLatUnit * wrapPerp + fwdLat * wrapFwd).toFixed(6)),
+        Number((endLng + perpLngUnit * wrapPerp + fwdLng * wrapFwd).toFixed(6)),
+      ],
+      [
+        Number((endLat - perpLatUnit * wrapPerp + fwdLat * wrapFwd).toFixed(6)),
+        Number((endLng - perpLngUnit * wrapPerp + fwdLng * wrapFwd).toFixed(6)),
+      ],
     ];
 
     const viaResults = await Promise.all(
