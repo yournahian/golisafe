@@ -4,16 +4,16 @@ import {
   Alert,
   Image,
   Modal,
-  ScrollView,
+  Platform,
   StyleSheet,
   Text,
-  TextInput,
   TouchableOpacity,
   View,
 } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import { Audio } from 'expo-av';
 import { LightSensor } from 'expo-sensors';
+import Svg, { Circle, Ellipse, Path } from 'react-native-svg';
 import AppIcon from '../AppIcon';
 import {
   HazardCategory,
@@ -36,6 +36,8 @@ export interface QuickReportModalProps {
   visible: boolean;
   currentLocation: { latitude: number; longitude: number };
   initialCoords?: { latitude: number; longitude: number } | null;
+  locationLabel?: string | null;
+  distanceText?: string | null;
   onClose: () => void;
   onSubmitHazard: (payload: QuickReportHazardPayload) => Promise<void>;
   onOpenFullReport?: (draft: {
@@ -50,111 +52,172 @@ export interface QuickReportModalProps {
   language?: 'en' | 'bn';
 }
 
-interface CategoryOption {
+interface CategoryTileMeta {
   id: HazardCategory;
-  label: string;
-  shortLabel: string;
-  icon: string;
+  title: string;
+  titleBn: string;
+  sub: string;
+  subBn: string;
   accent: string;
-  surface: string;
+  iconBg: string;
 }
 
-const CATEGORIES: CategoryOption[] = [
+const CATEGORIES: CategoryTileMeta[] = [
   {
-    id: 'pothole_manhole',
-    label: 'Pothole / Open Manhole',
-    shortLabel: 'Pothole /\nManhole',
-    icon: '🕳️',
-    accent: '#F59E0B',
-    surface: 'rgba(245, 158, 11, 0.18)',
-  },
-  {
-    id: 'waterlogging',
-    label: 'Waterlogging Depth',
-    shortLabel: 'Waterlogging\nDepth',
-    icon: '🌊',
-    accent: '#3B82F6',
-    surface: 'rgba(59, 130, 246, 0.18)',
+    id: 'extortion_spot',
+    title: 'Chanda\nAlert',
+    titleBn: 'চাঁদা\nসতর্কতা',
+    sub: 'Extortion\nspot',
+    subBn: 'চাঁদাবাজি',
+    accent: '#F87171',
+    iconBg: 'rgba(239, 68, 68, 0.16)',
   },
   {
     id: 'unlit_alley',
-    label: 'Unlit / Dark Alley',
-    shortLabel: 'Unlit / Dark\nAlley',
-    icon: '💡',
-    accent: '#A855F7',
-    surface: 'rgba(168, 85, 247, 0.18)',
+    title: 'Dark-Zone\nSafety',
+    titleBn: 'অন্ধকার\nগলি',
+    sub: 'Unlit alley',
+    subBn: 'আলো নেই',
+    accent: '#C084FC',
+    iconBg: 'rgba(168, 85, 247, 0.16)',
+  },
+  {
+    id: 'waterlogging',
+    title: 'WaterLog',
+    titleBn: 'জলাবদ্ধতা',
+    sub: 'Flood depth',
+    subBn: 'পানি জমা',
+    accent: '#60A5FA',
+    iconBg: 'rgba(59, 130, 246, 0.16)',
+  },
+  {
+    id: 'pothole_manhole',
+    title: 'Road\nHazard',
+    titleBn: 'সড়ক\nঝুঁকি',
+    sub: 'Open\nmanhole',
+    subBn: 'খোলা গর্ত',
+    accent: '#F87171',
+    iconBg: 'rgba(248, 113, 113, 0.16)',
   },
   {
     id: 'unsafe_footbridge',
-    label: 'Unsafe Footbridge',
-    shortLabel: 'Unsafe\nFootbridge',
-    icon: '🌉',
+    title: 'Safe\nCrossing',
+    titleBn: 'নিরাপদ\nপারাপার',
+    sub: 'Crossing\nrisk',
+    subBn: 'ফুটব্রিজ',
     accent: '#FB923C',
-    surface: 'rgba(251, 146, 60, 0.18)',
-  },
-  {
-    id: 'extortion_spot',
-    label: 'Extortion Choke-Point',
-    shortLabel: 'Extortion\nChoke-Point',
-    icon: '🛑',
-    accent: '#EF4444',
-    surface: 'rgba(239, 68, 68, 0.18)',
+    iconBg: 'rgba(249, 115, 22, 0.16)',
   },
 ];
 
-const FOOTBRIDGE_SUBTAGS = [
-  'Addicts/Snatchers at Night',
-  'Hawker Blocked',
-  'Broken Lighting',
-];
-
-const SEVERITIES: HazardSeverity[] = ['Low', 'Medium', 'Critical'];
+function CategorySvgIcon({
+  category,
+  color,
+  size = 18,
+}: {
+  category: HazardCategory;
+  color: string;
+  size?: number;
+}) {
+  return (
+    <Svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke={color}
+      strokeWidth={2}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      {category === 'extortion_spot' && (
+        <>
+          <Path d="M8.2 3h7.6L21 8.2v7.6L15.8 21H8.2L3 15.8V8.2L8.2 3Z" />
+          <Path d="M12 7.5v5.5" />
+          <Circle cx={12} cy={16.2} r={0.8} fill={color} />
+        </>
+      )}
+      {category === 'unlit_alley' && (
+        <>
+          <Path d="M6 21V6.5a2.5 2.5 0 0 1 2.5-2.5H13" />
+          <Path d="M10.5 4h5l1.5 2.5h-8L10.5 4Z" />
+          <Path d="M4 21h5" />
+          <Path d="M16.5 10.5a3.5 3.5 0 1 0 3.5 4.2 2.8 2.8 0 0 1-3.5-4.2Z" />
+        </>
+      )}
+      {category === 'waterlogging' && (
+        <>
+          <Path d="M12 3.5 9.2 7.2a3.5 3.5 0 1 0 5.6 0L12 3.5Z" />
+          <Path d="M2.5 15c1.6 1.4 3.8 1.4 5.4 0 1.6-1.4 3.8-1.4 5.4 0 1.6 1.4 3.8 1.4 5.4 0 1.1-1 2.1-1.2 2.8-.8" />
+          <Path d="M2.5 19.5c1.6 1.4 3.8 1.4 5.4 0 1.6-1.4 3.8-1.4 5.4 0 1.6 1.4 3.8 1.4 5.4 0 1.1-1 2.1-1.2 2.8-.8" />
+        </>
+      )}
+      {category === 'pothole_manhole' && (
+        <>
+          <Path d="M7.5 3.5 3.5 20.5M16.5 3.5l4 17" />
+          <Ellipse cx={12} cy={14.5} rx={4.2} ry={2.6} />
+          <Path d="M12 4.5v3.5" />
+        </>
+      )}
+      {category === 'unsafe_footbridge' && (
+        <>
+          <Circle cx={12.5} cy={4.5} r={1.8} />
+          <Path d="M9.5 11.5 11.5 8h2l2 3.5" />
+          <Path d="m10.5 16.5 1.5-4.5 2 4.5" />
+          <Path d="M3.5 20h3M10.5 20h3M17.5 20h3" />
+        </>
+      )}
+    </Svg>
+  );
+}
 
 export const QuickReportModal: React.FC<QuickReportModalProps> = ({
   visible,
   currentLocation,
   initialCoords,
+  locationLabel,
+  distanceText,
   onClose,
   onSubmitHazard,
   onOpenFullReport,
   isDark = true,
   language = 'en',
 }) => {
-  const [selectedCategory, setSelectedCategory] = useState<HazardCategory>('pothole_manhole');
-  const [selectedSeverity, setSelectedSeverity] = useState<HazardSeverity>('Medium');
-  const [selectedSubtag, setSelectedSubtag] = useState<string | undefined>(undefined);
+  const bn = language === 'bn';
+  const [selectedCategory, setSelectedCategory] =
+    useState<HazardCategory>('pothole_manhole');
+  const [hasTappedCategory, setHasTappedCategory] = useState<boolean>(false);
+  const [selectedSeverity, setSelectedSeverity] =
+    useState<HazardSeverity>('Medium');
+  const [voiceLang, setVoiceLang] = useState<'Bangla' | 'Banglish' | 'English'>(
+    'Bangla',
+  );
   const [landmarkContext, setLandmarkContext] = useState<string>('');
   const [imageUri, setImageUri] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
 
-  // FR-06 Voice Note Recording & AI Classification
   const [recording, setRecording] = useState<Audio.Recording | null>(null);
   const [isRecording, setIsRecording] = useState<boolean>(false);
   const [recordDuration, setRecordDuration] = useState<number>(0);
-  const [classifyingSource, setClassifyingSource] = useState<'voice' | 'photo' | null>(null);
-  const isClassifying = classifyingSource !== null;
+  const [classifyingSource, setClassifyingSource] = useState<
+    'voice' | 'photo' | null
+  >(null);
   const [aiDraft, setAiDraft] = useState<AiClassificationResult | null>(null);
-  const [aiTimeoutNotice, setAiTimeoutNotice] = useState<string | null>(null);
-
-  // FR-09 Ambient Light Sensor (Lux) for unlit_alley
-  const [sensorAvailable, setSensorAvailable] = useState<boolean | null>(null);
   const [luxReading, setLuxReading] = useState<number | null>(null);
 
-  const effectiveInitial = initialCoords ?? currentLocation;
-  const [latitude, setLatitude] = useState<number>(effectiveInitial.latitude);
-  const [longitude, setLongitude] = useState<number>(effectiveInitial.longitude);
+  const effectiveCoords = initialCoords ?? currentLocation;
+  const latitude = effectiveCoords.latitude;
+  const longitude = effectiveCoords.longitude;
 
   useEffect(() => {
-    if (initialCoords) {
-      setLatitude(initialCoords.latitude);
-      setLongitude(initialCoords.longitude);
-    } else if (currentLocation) {
-      setLatitude(currentLocation.latitude);
-      setLongitude(currentLocation.longitude);
+    if (!visible) {
+      setHasTappedCategory(false);
+      setAiDraft(null);
+      setImageUri(null);
+      setLandmarkContext('');
     }
-  }, [initialCoords, currentLocation, visible]);
+  }, [visible]);
 
-  // Clean up recording instance if modal closes
   useEffect(() => {
     return () => {
       if (recording) {
@@ -163,13 +226,12 @@ export const QuickReportModal: React.FC<QuickReportModalProps> = ({
     };
   }, [recording]);
 
-  // 15-second live countdown timer for voice note
   useEffect(() => {
-    let interval: NodeJS.Timeout | null = null;
+    let interval: ReturnType<typeof setInterval> | null = null;
     if (isRecording) {
       interval = setInterval(() => {
         setRecordDuration((prev) => {
-          if (prev >= 15) {
+          if (prev + 1 >= 15) {
             stopVoiceRecording();
             return 15;
           }
@@ -184,69 +246,78 @@ export const QuickReportModal: React.FC<QuickReportModalProps> = ({
     };
   }, [isRecording]);
 
-  // FR-09 & Sec 2.6: Ambient Light Sensor (Lux) listener with manual darkness fallback
   useEffect(() => {
-    let subscription: { remove: () => void } | null = null;
-    let isMounted = true;
-
+    let sub: { remove: () => void } | null = null;
+    let active = true;
     if (visible && selectedCategory === 'unlit_alley') {
       LightSensor.isAvailableAsync()
-        .then((available) => {
-          if (!isMounted) return;
-          setSensorAvailable(available);
-          if (available) {
-            LightSensor.setUpdateInterval(500);
-            subscription = LightSensor.addListener((data) => {
-              if (isMounted && data && typeof data.illuminance === 'number') {
-                setLuxReading(Math.round(data.illuminance));
-              }
-            });
-          }
+        .then((avail) => {
+          if (!active || !avail) return;
+          LightSensor.setUpdateInterval(600);
+          sub = LightSensor.addListener((d) => {
+            if (active && typeof d.illuminance === 'number') {
+              setLuxReading(Math.round(d.illuminance));
+            }
+          });
         })
-        .catch(() => {
-          if (isMounted) {
-            setSensorAvailable(false);
-          }
-        });
+        .catch(() => {});
     } else {
       setLuxReading(null);
-      setSensorAvailable(null);
     }
-
     return () => {
-      isMounted = false;
-      if (subscription) {
-        subscription.remove();
-      }
+      active = false;
+      sub?.remove();
     };
   }, [visible, selectedCategory]);
 
-  const isPinDropped = Boolean(initialCoords);
-
-  const handleCategorySelect = (category: HazardCategory) => {
-    setSelectedCategory(category);
-    if (category !== 'unsafe_footbridge') {
-      setSelectedSubtag(undefined);
-    }
+  const handlePhotoChoice = () => {
+    Alert.alert(
+      bn ? 'ছবি যুক্ত করুন' : 'Add Photo',
+      bn ? 'ছবি তোলার মাধ্যম নির্বাচন করুন' : 'Choose photo source',
+      [
+        {
+          text: bn ? 'ক্যামেরা' : 'Take Photo',
+          onPress: () => pickImage(true),
+        },
+        {
+          text: bn ? 'গ্যালারি' : 'Choose Gallery',
+          onPress: () => pickImage(false),
+        },
+        { text: bn ? 'বাতিল' : 'Cancel', style: 'cancel' },
+      ],
+    );
   };
 
-  const handleSubtagToggle = (subtag: string) => {
-    setSelectedSubtag((prev) => (prev === subtag ? undefined : subtag));
-  };
-
-  const handlePickFromGallery = async () => {
+  const pickImage = async (fromCamera: boolean) => {
     try {
-      const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ['images'],
-        allowsEditing: false,
-        quality: 0.7,
-        base64: true,
-      });
-      if (!result.canceled && result.assets && result.assets.length > 0) {
-        const asset = result.assets[0];
+      if (fromCamera) {
+        const perm = await ImagePicker.requestCameraPermissionsAsync();
+        if (!perm.granted) {
+          Alert.alert(
+            bn ? 'অনুমতি প্রয়োজন' : 'Permission Required',
+            bn
+              ? 'ছবি তুলতে ক্যামেরার অনুমতি দিন।'
+              : 'Please grant camera permission to take a photo.',
+          );
+          return;
+        }
+      }
+      const res = fromCamera
+        ? await ImagePicker.launchCameraAsync({
+            mediaTypes: ['images'],
+            allowsEditing: false,
+            quality: 0.7,
+            base64: true,
+          })
+        : await ImagePicker.launchImageLibraryAsync({
+            mediaTypes: ['images'],
+            allowsEditing: false,
+            quality: 0.7,
+            base64: true,
+          });
+      if (!res.canceled && res.assets?.[0]?.uri) {
+        const asset = res.assets[0];
         setImageUri(asset.uri);
-
-        // Send actual image base64 to Gemini Vision AI (never overwrite user choice on fallback)
         if (asset.base64) {
           setClassifyingSource('photo');
           try {
@@ -258,6 +329,7 @@ export const QuickReportModal: React.FC<QuickReportModalProps> = ({
             if (aiRes && !aiRes.fallback) {
               setSelectedCategory(aiRes.category);
               setSelectedSeverity(aiRes.severity);
+              setHasTappedCategory(true);
               setAiDraft(aiRes);
             }
           } finally {
@@ -266,110 +338,43 @@ export const QuickReportModal: React.FC<QuickReportModalProps> = ({
         }
       }
     } catch (err: any) {
-      console.warn('[QuickReport] Gallery pick failed:', err);
       Alert.alert(
-        language === 'bn' ? 'ত্রুটি' : 'Error',
-        language === 'bn'
-          ? 'ছবি নির্বাচন করতে ব্যর্থ হয়েছে।'
-          : `Unable to select image. ${err?.message || 'Please try again.'}`
+        bn ? 'ত্রুটি' : 'Error',
+        err?.message || 'Unable to attach photo. Please try again.',
       );
     }
   };
 
-  const handleTakePhoto = async () => {
-    try {
-      const permission = await ImagePicker.requestCameraPermissionsAsync();
-      if (!permission.granted) {
-        Alert.alert(
-          language === 'bn' ? 'অনুমতি প্রয়োজন' : 'Permission Required',
-          language === 'bn'
-            ? 'ছবি তুলতে ক্যামেরার অনুমতি প্রয়োজন।'
-            : 'Please grant camera access to take photo evidence.'
-        );
-        return;
-      }
-      const result = await ImagePicker.launchCameraAsync({
-        mediaTypes: ['images'],
-        allowsEditing: false,
-        quality: 0.7,
-        base64: true,
-      });
-      if (!result.canceled && result.assets && result.assets.length > 0) {
-        const asset = result.assets[0];
-        setImageUri(asset.uri);
-
-        if (asset.base64) {
-          setClassifyingSource('photo');
-          try {
-            const aiRes = await classifyWithAI({
-              imageBase64: asset.base64,
-              text: landmarkContext.trim() || undefined,
-              currentCategory: selectedCategory,
-            });
-            if (aiRes && !aiRes.fallback) {
-              setSelectedCategory(aiRes.category);
-              setSelectedSeverity(aiRes.severity);
-              setAiDraft(aiRes);
-            }
-          } finally {
-            setClassifyingSource(null);
-          }
-        }
-      }
-    } catch (err: any) {
-      console.warn('[QuickReport] Camera capture failed:', err);
-      Alert.alert(
-        language === 'bn' ? 'ত্রুটি' : 'Error',
-        language === 'bn'
-          ? 'ছবি ক্যাপচার করতে ব্যর্থ হয়েছে।'
-          : `Unable to capture photo. ${err?.message || 'Please try again.'}`
-      );
-    }
-  };
-
-  // FR-06 Start Voice Recording
   const startVoiceRecording = async () => {
     try {
       setAiDraft(null);
-      setAiTimeoutNotice(null);
-
       const perm = await Audio.requestPermissionsAsync();
       if (!perm.granted) {
         Alert.alert(
-          language === 'bn' ? 'অনুমতি প্রয়োজন' : 'Microphone Permission',
-          language === 'bn'
+          bn ? 'অনুমতি প্রয়োজন' : 'Microphone Permission',
+          bn
             ? 'ভয়েস রিপোর্ট রেকর্ড করতে মাইক্রোফোনের অনুমতি দিন।'
-            : 'Please grant microphone access to record 15-second voice reports.'
+            : 'Please grant microphone access to record a voice report.',
         );
         return;
       }
-
       await Audio.setAudioModeAsync({
         allowsRecordingIOS: true,
         playsInSilentModeIOS: true,
       });
-
-      const { recording: newRecording } = await Audio.Recording.createAsync(
-        Audio.RecordingOptionsPresets.HIGH_QUALITY
+      const { recording: rec } = await Audio.Recording.createAsync(
+        Audio.RecordingOptionsPresets.HIGH_QUALITY,
       );
-      setRecording(newRecording);
-      setIsRecording(true);
+      setRecording(rec);
       setRecordDuration(0);
-    } catch (err) {
-      console.warn('[QuickReport] Voice recording start failed:', err);
-      Alert.alert(
-        language === 'bn' ? 'রেকর্ডিং ব্যর্থ' : 'Recording Error',
-        language === 'bn'
-          ? 'মাইক্রোফোন সক্রিয় করা যায়নি।'
-          : 'Unable to start audio recording.'
-      );
+      setIsRecording(true);
+    } catch {
+      Alert.alert('Recording Error', 'Unable to start audio recording.');
     }
   };
 
-  // FR-06 Stop Recording & Trigger AI Classification
   const stopVoiceRecording = async () => {
     if (!recording) return;
-
     try {
       setIsRecording(false);
       await recording.stopAndUnloadAsync();
@@ -379,88 +384,44 @@ export const QuickReportModal: React.FC<QuickReportModalProps> = ({
       if (uri) {
         setClassifyingSource('voice');
         const audioBase64 = await readFileAsBase64(uri);
-        const classification = await classifyWithAI({
+        const res = await classifyWithAI({
           audioBase64: audioBase64 || undefined,
           audioMimeType: 'audio/mp4',
           text: landmarkContext.trim() || undefined,
           currentCategory: selectedCategory,
         });
         setClassifyingSource(null);
-
-        if (classification && !classification.fallback) {
-          setSelectedCategory(classification.category);
-          setSelectedSeverity(classification.severity);
-          if (classification.sub_tag) {
-            setSelectedSubtag(classification.sub_tag);
+        if (res && !res.fallback) {
+          setSelectedCategory(res.category);
+          setSelectedSeverity(res.severity);
+          setHasTappedCategory(true);
+          if (res.transcript) {
+            setLandmarkContext(res.transcript);
           }
-          if (classification.transcript && !landmarkContext.trim()) {
-            setLandmarkContext(classification.transcript);
-          }
-          setAiDraft(classification);
-        } else {
-          setAiTimeoutNotice(
-            classification?.reasoning ||
-              (language === 'bn'
-                ? 'এআই সার্ভার ব্যস্ত আছে — আপনার নির্বাচিত ক্যাটাগরি অপরিবর্তিত রাখা হয়েছে।'
-                : 'AI service busy or timed out — your selected category was kept.')
-          );
+          setAiDraft(res);
         }
       }
-    } catch (err) {
-      console.warn('[QuickReport] stopVoiceRecording error:', err);
+    } catch {
       setIsRecording(false);
       setClassifyingSource(null);
       setRecording(null);
-      setAiTimeoutNotice(
-        language === 'bn'
-          ? 'ভয়েস প্রক্রিয়াকরণ নোটিশ — ম্যানুয়ালি নির্বাচন করুন।'
-          : 'Voice processing note — manual selection available.'
-      );
     }
   };
 
-  // Final Hazard Submission with Real Supabase Storage Upload (FR-07)
-  const handleSubmit = async () => {
-    if (!selectedCategory) {
-      Alert.alert(
-        language === 'bn' ? 'প্রয়োজন' : 'Required',
-        language === 'bn'
-          ? 'দয়া করে একটি ঝুঁকির ক্যাটাগরি নির্বাচন করুন।'
-          : 'Please select a hazard category.'
-      );
-      return;
-    }
-
+  const handleQuickSubmit = async () => {
     try {
       setIsSubmitting(true);
-      let finalPhotoUrl = imageUri;
-
-      // Real Supabase Storage Upload (FR-07)
+      let uploadedUrl = imageUri ?? undefined;
       if (imageUri) {
-        const uploadedUrl = await uploadHazardImage(imageUri);
-        if (uploadedUrl) {
-          finalPhotoUrl = uploadedUrl;
-        }
+        const remote = await uploadHazardImage(imageUri);
+        if (remote) uploadedUrl = remote;
       }
-
-      let finalSubTag = selectedCategory === 'unsafe_footbridge' ? selectedSubtag : undefined;
-      let finalLandmark = landmarkContext.trim() || undefined;
-
-      // FR-09 Street Illumination (Lux) Context Integration
-      if (selectedCategory === 'unlit_alley') {
-        if (sensorAvailable === true && luxReading !== null) {
-          finalSubTag = `${luxReading} lux (${luxReading < 15 ? 'Dark Alley Confirmed' : 'Well-Lit'})`;
-          const luxNotice = `[Ambient Light: ${luxReading} lux — ${
-            luxReading < 15 ? 'Dark Alley Confirmed' : 'Well-Lit'
-          }]`;
-          finalLandmark = finalLandmark ? `${finalLandmark} ${luxNotice}` : luxNotice;
-        } else if (sensorAvailable === false) {
-          finalSubTag = 'Manual Darkness Mode';
-          const fallbackNotice = '[Street Illumination: Manual Darkness Mode (Sensor unavailable)]';
-          finalLandmark = finalLandmark ? `${finalLandmark} ${fallbackNotice}` : fallbackNotice;
-        }
+      let finalLandmark =
+        landmarkContext.trim() || locationLabel?.trim() || undefined;
+      let finalSubTag: string | undefined;
+      if (selectedCategory === 'unlit_alley' && luxReading !== null) {
+        finalSubTag = `${luxReading} lux (${luxReading < 15 ? 'Dark Alley Confirmed' : 'Well-Lit'})`;
       }
-
       await onSubmitHazard({
         category: selectedCategory,
         severity: selectedSeverity,
@@ -468,31 +429,47 @@ export const QuickReportModal: React.FC<QuickReportModalProps> = ({
         longitude,
         landmark_context: finalLandmark,
         sub_tag: finalSubTag,
-        imageUri: finalPhotoUrl || undefined,
-        image_url: finalPhotoUrl || undefined,
+        imageUri: uploadedUrl,
+        image_url: uploadedUrl,
       });
-
-      // Reset form states on successful submission
-      setLandmarkContext('');
-      setSelectedSubtag(undefined);
-      setSelectedSeverity('Medium');
-      setImageUri(null);
-      setAiDraft(null);
-      setAiTimeoutNotice(null);
-      setLuxReading(null);
-      setSensorAvailable(null);
       onClose();
-    } catch (error) {
+    } catch (err: any) {
       Alert.alert(
-        language === 'bn' ? 'সাবমিশন ব্যর্থ' : 'Submission Error',
-        error instanceof Error ? error.message : 'Failed to submit report. Please try again.'
+        bn ? 'সাবমিশন ব্যর্থ' : 'Submission Error',
+        err?.message || 'Could not submit hazard report.',
       );
     } finally {
       setIsSubmitting(false);
     }
   };
 
-  const remainingSeconds = Math.max(0, 15 - recordDuration);
+  const subtitleText = locationLabel
+    ? `${locationLabel}${distanceText ? ` · ${distanceText}` : ''}`
+    : `${latitude.toFixed(4)}°N, ${longitude.toFixed(4)}°E`;
+
+  const theme = isDark
+    ? {
+        sheetBg: '#10182B',
+        sheetBorder: '#1E2D4A',
+        cardBg: '#152036',
+        cardBorder: '#243556',
+        text: '#F8FAFC',
+        textSub: '#94A3B8',
+        closeBg: '#18243E',
+        closeBorder: '#283B60',
+      }
+    : {
+        sheetBg: '#FFFFFF',
+        sheetBorder: '#CBD5E1',
+        cardBg: '#F8FAFC',
+        cardBorder: '#E2E8F0',
+        text: '#0F172A',
+        textSub: '#64748B',
+        closeBg: '#F1F5F9',
+        closeBorder: '#CBD5E1',
+      };
+
+  const canQuickSubmit = hasTappedCategory || Boolean(imageUri) || Boolean(aiDraft);
 
   return (
     <Modal
@@ -508,562 +485,273 @@ export const QuickReportModal: React.FC<QuickReportModalProps> = ({
           onPress={onClose}
         />
 
-        <View style={styles.sheetContainer}>
-          <View style={styles.dragHandle} />
-
-          <View style={styles.header}>
-            <View style={styles.titleGroup}>
-              <View style={styles.titleRow}>
-                <Text style={styles.title}>
-                  {language === 'bn' ? 'দ্রুত রিপোর্ট' : 'Quick Report'}
-                </Text>
-                {isPinDropped && (
-                  <View style={styles.pinBadge}>
-                    <Text style={styles.pinBadgeText}>
-                      {language === 'bn' ? '📍 মানচিত্রে পিন করা' : '📍 Pin dropped from map'}
-                    </Text>
-                  </View>
-                )}
-              </View>
-              <Text style={styles.subtitle}>
-                {latitude.toFixed(4)}°N, {longitude.toFixed(4)}°E &middot;{' '}
-                {isPinDropped
-                  ? language === 'bn'
-                    ? 'নির্বাচিত স্থান'
-                    : 'Pinned map coordinates'
-                  : language === 'bn'
-                  ? 'রিপোর্ট করতে ট্যাপ করুন'
-                  : 'Tap to report'}
+        <View
+          style={[
+            styles.sheet,
+            {
+              backgroundColor: theme.sheetBg,
+              borderColor: theme.sheetBorder,
+            },
+          ]}
+        >
+          {/* Header: Quick Report + Near <location> + Close */}
+          <View style={styles.headerRow}>
+            <View style={{ flex: 1 }}>
+              <Text style={[styles.title, { color: theme.text }]}>
+                {bn ? 'দ্রুত রিপোর্ট' : 'Quick Report'}
+              </Text>
+              <Text
+                style={[styles.subtitle, { color: theme.textSub }]}
+                numberOfLines={1}
+              >
+                {subtitleText}
               </Text>
             </View>
             <TouchableOpacity
               onPress={onClose}
-              hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
-              style={styles.closeButton}
-              accessibilityLabel="Close quick report modal"
+              style={[
+                styles.closeBtn,
+                {
+                  backgroundColor: theme.closeBg,
+                  borderColor: theme.closeBorder,
+                },
+              ]}
+              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
             >
-              <Text style={styles.closeButtonText}>✕</Text>
+              <Text style={[styles.closeText, { color: theme.text }]}>✕</Text>
             </TouchableOpacity>
           </View>
 
-          <ScrollView
-            showsVerticalScrollIndicator={false}
-            contentContainerStyle={styles.scrollContent}
-          >
-            {/* AI Confirmation Card (FR-13, NFR-19) */}
-            {aiDraft && (
-              <View style={styles.aiConfirmationCard}>
-                <View style={styles.aiHeaderRow}>
-                  <View style={styles.aiBadge}>
-                    <AppIcon name="sparkles" size={13} color="#60A5FA" />
-                    <Text style={styles.aiBadgeText}>
-                      {language === 'bn' ? 'এআই সনাক্তকরণ' : 'AI Classification (FR-13)'}
-                    </Text>
-                  </View>
-                  <Text style={styles.aiConfidenceText}>
-                    {Math.round((aiDraft.confidence ?? 0.9) * 100)}% match
-                  </Text>
-                </View>
-
-                <Text style={styles.aiDetectedTitle}>
-                  {language === 'bn' ? 'শনাক্তকৃত: ' : 'AI Detected: '}
-                  <Text style={styles.aiHighlight}>
-                    {CATEGORIES.find((c) => c.id === aiDraft.category)?.label || aiDraft.category}
-                  </Text>
-                  {' • '}
-                  <Text style={styles.aiHighlight}>{aiDraft.severity}</Text>
-                </Text>
-
-                {aiDraft.transcript && (
-                  <Text style={styles.aiTranscriptText} numberOfLines={1}>
-                    "{aiDraft.transcript}"
-                  </Text>
-                )}
-
-                <View style={styles.aiActionsRow}>
-                  <TouchableOpacity
-                    style={styles.aiConfirmBtn}
-                    onPress={() => setAiDraft(null)}
-                    activeOpacity={0.8}
-                  >
-                    <AppIcon name="checkmark-circle" size={14} color="#FFFFFF" />
-                    <Text style={styles.aiConfirmBtnText}>
-                      {language === 'bn' ? 'অনুমোদন' : 'Confirm'}
-                    </Text>
-                  </TouchableOpacity>
-
-                  <TouchableOpacity
-                    style={styles.aiEditBtn}
-                    onPress={() => setAiDraft(null)}
-                    activeOpacity={0.8}
-                  >
-                    <Text style={styles.aiEditBtnText}>
-                      {language === 'bn' ? 'সংশোধন' : 'Edit'}
-                    </Text>
-                  </TouchableOpacity>
-                </View>
-              </View>
-            )}
-
-            {/* AI Timeout Notice if service timed out */}
-            {aiTimeoutNotice && (
-              <View style={styles.aiTimeoutBanner}>
-                <AppIcon name="information-circle-outline" size={15} color="#94A3B8" />
-                <Text style={styles.aiTimeoutText}>{aiTimeoutNotice}</Text>
-                <TouchableOpacity onPress={() => setAiTimeoutNotice(null)}>
-                  <Text style={styles.aiTimeoutDismiss}>✕</Text>
-                </TouchableOpacity>
-              </View>
-            )}
-
-            {/* 15s Voice Note Recording Section (FR-06) */}
-            <View style={styles.section}>
-              <View style={styles.sectionLabelRow}>
-                <Text style={styles.sectionLabel}>
-                  {language === 'bn'
-                    ? 'ভয়েস রিপোর্ট (১৫ সেকেন্ড - FR-06)'
-                    : '15s Voice Report (FR-06)'}
-                </Text>
-                {isRecording && (
-                  <View style={styles.recordingTimerBadge}>
-                    <View style={styles.recordingDot} />
-                    <Text style={styles.recordingTimerText}>
-                      00:{String(remainingSeconds).padStart(2, '0')}
-                    </Text>
-                  </View>
-                )}
-              </View>
-
-              <TouchableOpacity
-                style={[
-                  styles.voiceRecordBtn,
-                  isRecording && styles.voiceRecordBtnActive,
-                  isClassifying && styles.voiceRecordBtnClassifying,
-                ]}
-                onPress={isRecording ? stopVoiceRecording : startVoiceRecording}
-                disabled={isClassifying}
-                activeOpacity={0.8}
-              >
-                {classifyingSource === 'voice' ? (
-                  <View style={styles.voiceBtnContent}>
-                    <ActivityIndicator size="small" color="#93C5FD" />
-                    <Text style={styles.voiceRecordBtnText}>
-                      {language === 'bn' ? 'এআই ভয়েস বিশ্লেষণ চলছে…' : 'AI Analyzing Voice…'}
-                    </Text>
-                  </View>
-                ) : classifyingSource === 'photo' ? (
-                  <View style={styles.voiceBtnContent}>
-                    <ActivityIndicator size="small" color="#93C5FD" />
-                    <Text style={styles.voiceRecordBtnText}>
-                      {language === 'bn' ? 'এআই ছবি বিশ্লেষণ চলছে…' : 'AI Analyzing Photo…'}
-                    </Text>
-                  </View>
-                ) : isRecording ? (
-                  <View style={styles.voiceBtnContent}>
-                    <AppIcon name="stop-circle" size={18} color="#FFFFFF" />
-                    <Text style={[styles.voiceRecordBtnText, { color: '#FFFFFF' }]}>
-                      {language === 'bn'
-                        ? `রেকর্ডিং বন্ধ করুন (বাকি ${remainingSeconds}s)`
-                        : `Stop Recording (00:${String(remainingSeconds).padStart(2, '0')} left)`}
-                    </Text>
-                  </View>
-                ) : (
-                  <View style={styles.voiceBtnContent}>
-                    <AppIcon name="mic" size={18} color="#93C5FD" />
-                    <Text style={styles.voiceRecordBtnText}>
-                      {language === 'bn'
-                        ? '🎙️ ভয়েস রেকর্ড করুন (সর্বোচ্চ ১৫ সে.)'
-                        : '🎙️ Record 15s Voice Note (AI Auto-Fill)'}
-                    </Text>
-                  </View>
-                )}
-              </TouchableOpacity>
-            </View>
-
-            {/* Category Selection */}
-            <View style={styles.section}>
-              <Text style={styles.sectionLabel}>
-                {language === 'bn' ? 'ঝুঁকির ক্যাটাগরি নির্বাচন' : 'Select Hazard Category'}
-              </Text>
-              <View style={styles.categoryGrid}>
-                {CATEGORIES.map((cat) => {
-                  const isSelected = selectedCategory === cat.id;
-                  return (
-                    <TouchableOpacity
-                      key={cat.id}
-                      style={[
-                        styles.categoryTile,
-                        isSelected && {
-                          borderColor: cat.accent,
-                          backgroundColor: cat.surface,
-                        },
-                      ]}
-                      onPress={() => handleCategorySelect(cat.id)}
-                      activeOpacity={0.7}
-                    >
-                      <Text style={styles.categoryIcon}>{cat.icon}</Text>
-                      <Text
-                        style={[
-                          styles.categoryTileText,
-                          isSelected && { color: cat.accent, fontWeight: '700' },
-                        ]}
-                        numberOfLines={2}
-                      >
-                        {cat.shortLabel}
-                      </Text>
-                    </TouchableOpacity>
-                  );
-                })}
-              </View>
-            </View>
-
-            {/* Footbridge Sub-Tags (Conditional) */}
-            {selectedCategory === 'unsafe_footbridge' && (
-              <View style={styles.section}>
-                <Text style={styles.sectionLabel}>
-                  {language === 'bn'
-                    ? 'ফুটব্রিজ ঝুঁকি সাব-ট্যাগ'
-                    : 'Footbridge / Crossing Risk Sub-Tags'}
-                </Text>
-                <View style={styles.subtagsContainer}>
-                  {FOOTBRIDGE_SUBTAGS.map((subtag) => {
-                    const isSubtagActive = selectedSubtag === subtag;
-                    return (
-                      <TouchableOpacity
-                        key={subtag}
-                        style={[
-                          styles.subtagPill,
-                          isSubtagActive && styles.subtagPillActive,
-                        ]}
-                        onPress={() => handleSubtagToggle(subtag)}
-                        activeOpacity={0.7}
-                      >
-                        <Text
-                          style={[
-                            styles.subtagText,
-                            isSubtagActive && styles.subtagTextActive,
-                          ]}
-                        >
-                          {subtag}
-                        </Text>
-                      </TouchableOpacity>
-                    );
-                  })}
-                </View>
-              </View>
-            )}
-
-            {/* Street Illumination (Lux) Meter (SRS FR-09 & Section 2.6 fallback) */}
-            {selectedCategory === 'unlit_alley' && (
-              <View style={styles.section}>
-                <View style={styles.sectionLabelRow}>
-                  <Text style={styles.sectionLabel}>
-                    {language === 'bn'
-                      ? 'রাস্তার আলো পরিমাপক (Lux সেন্সর - FR-09)'
-                      : 'Street Illumination Meter (FR-09)'}
-                  </Text>
-                  {sensorAvailable === true && luxReading !== null && (
-                    <View
-                      style={[
-                        styles.luxStatusBadge,
-                        luxReading < 15 ? styles.luxBadgeDark : styles.luxBadgeLit,
-                      ]}
-                    >
-                      <View
-                        style={[
-                          styles.luxStatusDot,
-                          { backgroundColor: luxReading < 15 ? '#C084FC' : '#4ADE80' },
-                        ]}
-                      />
-                      <Text
-                        style={[
-                          styles.luxStatusBadgeText,
-                          { color: luxReading < 15 ? '#E9D5FF' : '#DCFCE7' },
-                        ]}
-                      >
-                        {luxReading < 15
-                          ? language === 'bn'
-                            ? 'অন্ধকার গলি নিশ্চিত'
-                            : 'Dark Alley Confirmed'
-                          : language === 'bn'
-                          ? 'আলোকিত রাস্তা'
-                          : 'Well-Lit Street'}
-                      </Text>
-                    </View>
-                  )}
-                </View>
-
-                {sensorAvailable === true && luxReading !== null ? (
+          {/* Select hazard category — 5 crisp vertical Figma cards */}
+          <Text style={[styles.sectionLabel, { color: theme.textSub }]}>
+            {bn ? 'ঝুঁকির ক্যাটাগরি নির্বাচন করুন' : 'Select hazard category'}
+          </Text>
+          <View style={styles.catRow}>
+            {CATEGORIES.map((cat) => {
+              const active = hasTappedCategory && selectedCategory === cat.id;
+              return (
+                <TouchableOpacity
+                  key={cat.id}
+                  style={[
+                    styles.catCard,
+                    {
+                      backgroundColor: active ? cat.iconBg : theme.cardBg,
+                      borderColor: active ? cat.accent : theme.cardBorder,
+                    },
+                  ]}
+                  onPress={() => {
+                    setSelectedCategory(cat.id);
+                    setHasTappedCategory(true);
+                  }}
+                  activeOpacity={0.8}
+                >
                   <View
+                    style={[styles.catIconBox, { backgroundColor: cat.iconBg }]}
+                  >
+                    <CategorySvgIcon
+                      category={cat.id}
+                      color={cat.accent}
+                      size={18}
+                    />
+                  </View>
+                  <Text
+                    style={[styles.catTitle, { color: theme.text }]}
+                    numberOfLines={2}
+                  >
+                    {bn ? cat.titleBn : cat.title}
+                  </Text>
+                  <Text
+                    style={[styles.catSub, { color: theme.textSub }]}
+                    numberOfLines={2}
+                  >
+                    {bn ? cat.subBn : cat.sub}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+
+          {/* Voice Report Card matching Figma SS1 */}
+          <View
+            style={[
+              styles.voiceCard,
+              {
+                backgroundColor: theme.cardBg,
+                borderColor: theme.cardBorder,
+              },
+            ]}
+          >
+            <View style={styles.voiceTopRow}>
+              <Text style={[styles.voiceTitle, { color: theme.text }]}>
+                {bn
+                  ? 'ভয়েস রিপোর্ট রেকর্ড করতে ট্যাপ করুন'
+                  : 'Tap to record a voice report'}
+              </Text>
+              <View style={styles.timerBadge}>
+                <Text style={styles.timerBadgeText}>
+                  00:{String(recordDuration).padStart(2, '0')} / 00:15
+                </Text>
+              </View>
+            </View>
+
+            <View style={styles.langRow}>
+              {(['Bangla', 'Banglish', 'English'] as const).map((lang) => {
+                const active = voiceLang === lang;
+                return (
+                  <TouchableOpacity
+                    key={lang}
+                    onPress={() => setVoiceLang(lang)}
                     style={[
-                      styles.luxMeterCard,
-                      luxReading < 15 ? styles.luxMeterCardDark : styles.luxMeterCardLit,
+                      styles.langPill,
+                      active && styles.langPillActive,
                     ]}
+                    activeOpacity={0.8}
                   >
-                    <View style={styles.luxMeterHeader}>
-                      <View style={styles.luxIconWrap}>
-                        <AppIcon
-                          name={luxReading < 15 ? 'moon' : 'sunny'}
-                          size={20}
-                          color={luxReading < 15 ? '#C084FC' : '#FBBF24'}
-                        />
-                      </View>
-                      <View style={{ flex: 1 }}>
-                        <Text style={styles.luxMeterTitle}>
-                          {language === 'bn'
-                            ? `পরিবেষ্টিত আলো: ${luxReading} lux`
-                            : `Ambient Light: ${luxReading} lux — ${
-                                luxReading < 15 ? 'Dark Alley Confirmed' : 'Well-Lit'
-                              }`}
-                        </Text>
-                        <Text style={styles.luxMeterSubtext}>
-                          {luxReading < 15
-                            ? language === 'bn'
-                              ? '১৫ লাক্সের নিচে আলো শনাক্ত — রাতের নিরাপদ নেভিগেশনের জন্য অগ্রাধিকার পাবে।'
-                              : 'Threshold met (< 15 lux). Flagged for nighttime navigation priority.'
-                            : language === 'bn'
-                            ? 'পর্যাপ্ত আলোকসজ্জা রয়েছে (১৫ লাক্স বা তার বেশি)।'
-                            : 'Adequate street lighting detected (>= 15 lux).'}
-                        </Text>
-                      </View>
-                    </View>
-
-                    {/* Visual Meter Bar */}
-                    <View style={styles.luxBarTrack}>
-                      <View
-                        style={[
-                          styles.luxBarFill,
-                          {
-                            width: `${Math.min(100, Math.max(8, (luxReading / 50) * 100))}%`,
-                            backgroundColor: luxReading < 15 ? '#A855F7' : '#10B981',
-                          },
-                        ]}
-                      />
-                    </View>
-                    <View style={styles.luxBarScaleRow}>
-                      <Text style={styles.luxBarScaleText}>0 lux (Pitch Black)</Text>
-                      <Text style={styles.luxBarScaleThreshold}>15 lux Threshold</Text>
-                      <Text style={styles.luxBarScaleText}>50+ lux (Bright)</Text>
-                    </View>
-                  </View>
-                ) : sensorAvailable === false ? (
-                  <View style={styles.luxFallbackCard}>
-                    <AppIcon name="information-circle-outline" size={18} color="#F59E0B" />
-                    <View style={{ flex: 1 }}>
-                      <Text style={styles.luxFallbackTitle}>
-                        {language === 'bn'
-                          ? 'ম্যানুয়াল ডার্কনেস মোড (সেন্সর অনুপলব্ধ)'
-                          : 'Manual Darkness Mode (Sensor unavailable)'}
-                      </Text>
-                      <Text style={styles.luxFallbackSubtext}>
-                        {language === 'bn'
-                          ? 'ডিভাইসে অ্যাম্বিয়েন্ট লাইট সেন্সর কাজ করছে না। ম্যানুয়াল সাবমিশন প্রযোজ্য।'
-                          : 'Hardware light sensor is not supported or permission denied. Proceeding with manual hazard reporting.'}
-                      </Text>
-                    </View>
-                  </View>
-                ) : (
-                  <View style={styles.luxLoadingCard}>
-                    <ActivityIndicator size="small" color="#A855F7" />
-                    <Text style={styles.luxLoadingText}>
-                      {language === 'bn'
-                        ? 'আলোর মাত্রা পরিমাপ করা হচ্ছে…'
-                        : 'Calibrating ambient light sensor (lux)…'}
-                    </Text>
-                  </View>
-                )}
-              </View>
-            )}
-
-            {/* Severity Level */}
-            <View style={styles.section}>
-              <Text style={styles.sectionLabel}>
-                {language === 'bn' ? 'ঝুঁকির মাত্রা' : 'Severity Level'}
-              </Text>
-              <View style={styles.severityRow}>
-                {SEVERITIES.map((sev) => {
-                  const isSelected = selectedSeverity === sev;
-                  const sevColor =
-                    sev === 'Low'
-                      ? '#22C55E'
-                      : sev === 'Medium'
-                      ? '#F59E0B'
-                      : '#EF4444';
-                  const sevSurface =
-                    sev === 'Low'
-                      ? 'rgba(34, 197, 94, 0.18)'
-                      : sev === 'Medium'
-                      ? 'rgba(245, 158, 11, 0.18)'
-                      : 'rgba(239, 68, 68, 0.18)';
-
-                  const label =
-                    language === 'bn'
-                      ? sev === 'Low'
-                        ? 'কম ঝুঁকি'
-                        : sev === 'Medium'
-                        ? 'মাঝারি'
-                        : 'উচ্চ ঝুঁকি'
-                      : sev;
-
-                  return (
-                    <TouchableOpacity
-                      key={sev}
+                    <Text
                       style={[
-                        styles.severityPill,
-                        isSelected && {
-                          borderColor: sevColor,
-                          backgroundColor: sevSurface,
-                        },
+                        styles.langPillText,
+                        active && styles.langPillTextActive,
                       ]}
-                      onPress={() => setSelectedSeverity(sev)}
-                      activeOpacity={0.7}
                     >
-                      <Text
-                        style={[
-                          styles.severityText,
-                          isSelected && { color: sevColor, fontWeight: '700' },
-                        ]}
-                      >
-                        {label}
-                      </Text>
-                    </TouchableOpacity>
-                  );
-                })}
-              </View>
-            </View>
-
-            {/* Photo Evidence Section (Camera / Gallery) */}
-            <View style={styles.section}>
-              <View style={styles.sectionLabelRow}>
-                <Text style={styles.sectionLabel}>
-                  {language === 'bn'
-                    ? 'ছবির প্রমাণ (ক্যামেরা / গ্যালারি - FR-07)'
-                    : 'Photo Evidence (Camera / Gallery - FR-07)'}
-                </Text>
-                {imageUri && (
-                  <TouchableOpacity
-                    onPress={() => setImageUri(null)}
-                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                  >
-                    <Text style={styles.removePhotoText}>
-                      {language === 'bn' ? 'মুছে ফেলুন' : 'Remove'}
+                      {lang}
                     </Text>
                   </TouchableOpacity>
-                )}
-              </View>
-
-              {imageUri ? (
-                <View style={styles.photoPreviewWrapper}>
-                  <Image
-                    source={{ uri: imageUri }}
-                    style={styles.photoPreviewImage}
-                    resizeMode="cover"
-                  />
-                  <View style={styles.photoPreviewOverlay}>
-                    <AppIcon name="checkmark-circle" size={14} color="#86EFAC" />
-                    <Text style={styles.photoPreviewOverlayText}>
-                      {language === 'bn'
-                        ? 'ছবি সংযুক্ত (স্টোরেজে আপলোড হবে)'
-                        : 'Photo attached & GPS tagged (Supabase ready)'}
-                    </Text>
-                  </View>
-                </View>
-              ) : (
-                <View style={styles.photoActionRow}>
-                  <TouchableOpacity
-                    style={styles.photoPickerBtn}
-                    onPress={handleTakePhoto}
-                    activeOpacity={0.8}
-                  >
-                    <AppIcon name="camera-outline" size={18} color="#93C5FD" />
-                    <Text style={styles.photoPickerBtnText}>
-                      {language === 'bn' ? 'ক্যামেরা দিয়ে ছবি তুলুন' : 'Take Photo'}
-                    </Text>
-                  </TouchableOpacity>
-
-                  <TouchableOpacity
-                    style={styles.photoPickerBtn}
-                    onPress={handlePickFromGallery}
-                    activeOpacity={0.8}
-                  >
-                    <AppIcon name="images-outline" size={18} color="#93C5FD" />
-                    <Text style={styles.photoPickerBtnText}>
-                      {language === 'bn' ? 'গ্যালারি থেকে নির্বাচন' : 'Choose Gallery'}
-                    </Text>
-                  </TouchableOpacity>
-                </View>
-              )}
+                );
+              })}
             </View>
 
-            {/* Landmark Context */}
-            <View style={styles.section}>
-              <Text style={styles.sectionLabel}>
-                {language === 'bn'
-                  ? 'নিকটস্থ ল্যান্ডমার্ক / বর্ণনা (ঐচ্ছিক)'
-                  : 'Landmark / Context (Optional)'}
-              </Text>
-              <TextInput
-                style={styles.textInput}
-                placeholder={
-                  language === 'bn'
-                    ? 'যেমন: ফুটব্রিজ গেটের কাছে, চায়ের দোকানের পাশে...'
-                    : 'e.g., Near footbridge gate, tea stall on left...'
-                }
-                placeholderTextColor="#64748B"
-                value={landmarkContext}
-                onChangeText={setLandmarkContext}
-                multiline={false}
-              />
-            </View>
-
-            {/* Full Report Form Button (Figma HUD -> Full Report Page Flow) */}
-            {onOpenFullReport && (
-              <TouchableOpacity
-                style={styles.fullReportFormButton}
-                onPress={() => {
-                  onOpenFullReport({
-                    category: selectedCategory,
-                    severity: selectedSeverity,
-                    latitude,
-                    longitude,
-                    landmarkContext: landmarkContext.trim(),
-                    imageUri: imageUri || undefined,
-                  });
-                }}
-                activeOpacity={0.85}
-              >
-                <Text style={styles.fullReportFormButtonText}>
-                  {language === 'bn' ? 'সম্পূর্ণ রিপোর্ট ফর্ম' : 'Full Report Form'}
-                </Text>
-              </TouchableOpacity>
-            )}
-
-            {/* Submit Button */}
             <TouchableOpacity
               style={[
-                styles.submitButton,
-                isSubmitting && styles.submitButtonDisabled,
+                styles.recordBtn,
+                isRecording && { backgroundColor: '#EF4444' },
               ]}
-              onPress={handleSubmit}
+              onPress={isRecording ? stopVoiceRecording : startVoiceRecording}
+              disabled={classifyingSource !== null}
+              activeOpacity={0.85}
+            >
+              {classifyingSource !== null ? (
+                <>
+                  <ActivityIndicator size="small" color="#FFFFFF" />
+                  <Text style={styles.recordBtnText}>
+                    {classifyingSource === 'photo'
+                      ? bn
+                        ? 'এআই ছবি বিশ্লেষণ চলছে…'
+                        : 'AI Analyzing Photo…'
+                      : bn
+                        ? 'এআই ভয়েস বিশ্লেষণ চলছে…'
+                        : 'AI Analyzing Voice…'}
+                  </Text>
+                </>
+              ) : isRecording ? (
+                <>
+                  <AppIcon name="stop-circle" size={18} color="#FFFFFF" />
+                  <Text style={styles.recordBtnText}>
+                    {bn
+                      ? `রেকর্ডিং বন্ধ করুন (${15 - recordDuration}s)`
+                      : `Stop recording (${15 - recordDuration}s left)`}
+                  </Text>
+                </>
+              ) : (
+                <>
+                  <AppIcon name="mic" size={17} color="#FFFFFF" />
+                  <Text style={styles.recordBtnText}>
+                    {bn
+                      ? 'ভয়েস রিপোর্ট রেকর্ড করুন (সর্বোচ্চ ১৫ সে.)'
+                      : 'Record voice report (15s max)'}
+                  </Text>
+                </>
+              )}
+            </TouchableOpacity>
+          </View>
+
+          {/* Compact AI Detection / Photo Preview Pill */}
+          {(aiDraft || imageUri) && (
+            <View style={styles.attachmentRow}>
+              {imageUri && (
+                <Image
+                  source={{ uri: imageUri }}
+                  style={styles.thumbPreview}
+                  resizeMode="cover"
+                />
+              )}
+              <View style={{ flex: 1 }}>
+                {aiDraft ? (
+                  <Text style={styles.aiDetectedLine} numberOfLines={2}>
+                    ✨ AI: {CATEGORIES.find((c) => c.id === aiDraft.category)?.title.replace('\n', ' ')} · {aiDraft.severity}
+                    {aiDraft.transcript ? ` — "${aiDraft.transcript}"` : ''}
+                  </Text>
+                ) : (
+                  <Text style={styles.aiDetectedLine}>
+                    📷 {bn ? 'ছবি সংযুক্ত করা হয়েছে' : 'Photo attached & GPS tagged'}
+                  </Text>
+                )}
+              </View>
+            </View>
+          )}
+
+          {/* Bottom Row: Add Photo + Full Report Form (Figma SS1) */}
+          <View style={styles.bottomBtnRow}>
+            <TouchableOpacity
+              style={[
+                styles.secondaryActionBtn,
+                {
+                  backgroundColor: theme.cardBg,
+                  borderColor: theme.cardBorder,
+                },
+              ]}
+              onPress={handlePhotoChoice}
+              activeOpacity={0.85}
+            >
+              <AppIcon name="camera" size={16} color={theme.text} />
+              <Text style={[styles.secondaryActionText, { color: theme.text }]}>
+                {imageUri
+                  ? bn
+                    ? 'ছবি বদলান'
+                    : 'Change Photo'
+                  : bn
+                    ? 'ছবি যুক্ত করুন'
+                    : 'Add Photo'}
+              </Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.fullFormBtn}
+              onPress={() => {
+                onOpenFullReport?.({
+                  category: selectedCategory,
+                  severity: selectedSeverity,
+                  latitude,
+                  longitude,
+                  landmarkContext:
+                    landmarkContext.trim() || locationLabel?.trim() || '',
+                  imageUri: imageUri ?? undefined,
+                });
+              }}
+              activeOpacity={0.85}
+            >
+              <Text style={styles.fullFormBtnText}>
+                {bn ? 'সম্পূর্ণ রিপোর্ট ফর্ম' : 'Full Report Form'}
+              </Text>
+            </TouchableOpacity>
+          </View>
+
+          {/* Instant 1-tap Submit appears once category/voice/photo is chosen */}
+          {canQuickSubmit && (
+            <TouchableOpacity
+              style={styles.quickSubmitBtn}
+              onPress={handleQuickSubmit}
               disabled={isSubmitting}
-              activeOpacity={0.8}
+              activeOpacity={0.85}
             >
               {isSubmitting ? (
-                <View style={styles.submittingRow}>
-                  <ActivityIndicator size="small" color="#FFFFFF" />
-                  <Text style={styles.submitButtonText}>
-                    {language === 'bn'
-                      ? 'মিডিয়া আপলোড ও রিপোর্ট পাঠানো হচ্ছে…'
-                      : 'Uploading Media & Submitting Report…'}
-                  </Text>
-                </View>
+                <ActivityIndicator size="small" color="#FFFFFF" />
               ) : (
-                <Text style={styles.submitButtonText}>
-                  {language === 'bn' ? 'ঝুঁকি রিপোর্ট জমা দিন' : 'Submit Hazard Report'}
+                <Text style={styles.quickSubmitText}>
+                  {bn ? 'এখনই সাবমিট করুন' : 'Submit Quick Report'}
                 </Text>
               )}
             </TouchableOpacity>
-          </ScrollView>
+          )}
         </View>
       </View>
     </Modal>
@@ -1073,563 +761,215 @@ export const QuickReportModal: React.FC<QuickReportModalProps> = ({
 const styles = StyleSheet.create({
   backdrop: {
     flex: 1,
-    backgroundColor: 'rgba(15, 23, 42, 0.75)',
+    backgroundColor: 'rgba(6, 11, 23, 0.58)',
     justifyContent: 'flex-end',
   },
   backdropDismiss: {
     flex: 1,
   },
-  sheetContainer: {
-    backgroundColor: '#131C31',
-    borderTopLeftRadius: 22,
-    borderTopRightRadius: 22,
-    borderTopWidth: 1.5,
-    borderLeftWidth: 1,
-    borderRightWidth: 1,
-    borderColor: '#263554',
+  sheet: {
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    borderTopWidth: 1,
     paddingHorizontal: 16,
-    paddingTop: 12,
-    paddingBottom: 28,
-    maxHeight: '90%',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: -8 },
-    shadowOpacity: 0.35,
-    shadowRadius: 16,
-    elevation: 20,
+    paddingTop: 18,
+    paddingBottom: Platform.OS === 'ios' ? 28 : 18,
+    gap: 12,
   },
-  dragHandle: {
-    width: 36,
-    height: 4,
-    borderRadius: 2,
-    backgroundColor: '#334155',
-    alignSelf: 'center',
-    marginBottom: 12,
-  },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    justifyContent: 'space-between',
-    paddingBottom: 14,
-    borderBottomWidth: 1,
-    borderBottomColor: '#1E293B',
-  },
-  titleGroup: {
-    flex: 1,
-  },
-  titleRow: {
+  headerRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    flexWrap: 'wrap',
-    gap: 8,
+    gap: 10,
   },
   title: {
-    fontSize: 17,
-    lineHeight: 22,
-    fontWeight: '700',
-    color: '#F8FAFC',
-  },
-  pinBadge: {
-    backgroundColor: 'rgba(59, 130, 246, 0.16)',
-    borderWidth: 1,
-    borderColor: 'rgba(59, 130, 246, 0.35)',
-    borderRadius: 6,
-    paddingHorizontal: 7,
-    paddingVertical: 2,
-  },
-  pinBadgeText: {
-    fontSize: 11,
-    fontWeight: '600',
-    color: '#93C5FD',
+    fontSize: 20,
+    fontWeight: '800',
+    letterSpacing: -0.2,
   },
   subtitle: {
-    fontSize: 12,
-    lineHeight: 16,
-    color: '#94A3B8',
+    fontSize: 12.5,
     marginTop: 2,
   },
-  closeButton: {
-    padding: 4,
-    marginLeft: 8,
-  },
-  closeButtonText: {
-    fontSize: 18,
-    color: '#94A3B8',
-    fontWeight: '600',
-  },
-  scrollContent: {
-    paddingTop: 12,
-    paddingBottom: 10,
-    gap: 14,
-  },
-  section: {
-    gap: 8,
-  },
-  sectionLabelRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  sectionLabel: {
-    fontSize: 12,
-    lineHeight: 16,
-    fontWeight: '600',
-    color: '#94A3B8',
-    letterSpacing: 0.3,
-  },
-  removePhotoText: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: '#F87171',
-  },
-  aiConfirmationCard: {
-    borderRadius: 14,
-    borderWidth: 1.5,
-    borderColor: '#3B82F6',
-    backgroundColor: '#1E293B',
-    padding: 12,
-    gap: 8,
-  },
-  aiHeaderRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  aiBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 5,
-    backgroundColor: 'rgba(59, 130, 246, 0.18)',
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 6,
-  },
-  aiBadgeText: {
-    fontSize: 11.5,
-    fontWeight: '700',
-    color: '#60A5FA',
-  },
-  aiConfidenceText: {
-    fontSize: 11.5,
-    fontWeight: '600',
-    color: '#34D399',
-  },
-  aiDetectedTitle: {
-    fontSize: 13,
-    color: '#F8FAFC',
-    lineHeight: 18,
-  },
-  aiHighlight: {
-    fontWeight: '700',
-    color: '#93C5FD',
-  },
-  aiTranscriptText: {
-    fontSize: 12,
-    color: '#94A3B8',
-    fontStyle: 'italic',
-  },
-  aiActionsRow: {
-    flexDirection: 'row',
-    gap: 8,
-    marginTop: 2,
-  },
-  aiConfirmBtn: {
-    flex: 2,
-    height: 36,
-    backgroundColor: '#2563EB',
-    borderRadius: 8,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 6,
-  },
-  aiConfirmBtnText: {
-    fontSize: 12.5,
-    fontWeight: '700',
-    color: '#FFFFFF',
-  },
-  aiEditBtn: {
-    flex: 1,
-    height: 36,
-    backgroundColor: '#334155',
-    borderRadius: 8,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  aiEditBtnText: {
-    fontSize: 12.5,
-    fontWeight: '600',
-    color: '#CBD5E1',
-  },
-  aiTimeoutBanner: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    backgroundColor: 'rgba(148, 163, 184, 0.12)',
-    borderWidth: 1,
-    borderColor: '#334155',
-    borderRadius: 10,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-  },
-  aiTimeoutText: {
-    flex: 1,
-    fontSize: 11.5,
-    color: '#94A3B8',
-  },
-  aiTimeoutDismiss: {
-    fontSize: 13,
-    color: '#94A3B8',
-    paddingHorizontal: 4,
-  },
-  recordingTimerBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 5,
-    backgroundColor: 'rgba(239, 68, 68, 0.2)',
-    borderWidth: 1,
-    borderColor: 'rgba(239, 68, 68, 0.4)',
-    borderRadius: 6,
-    paddingHorizontal: 7,
-    paddingVertical: 2,
-  },
-  recordingDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-    backgroundColor: '#EF4444',
-  },
-  recordingTimerText: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: '#FCA5A5',
-  },
-  voiceRecordBtn: {
-    height: 44,
-    borderRadius: 12,
-    borderWidth: 1.5,
-    borderColor: '#334155',
-    backgroundColor: '#1E293B',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  voiceRecordBtnActive: {
-    backgroundColor: '#DC2626',
-    borderColor: '#EF4444',
-  },
-  voiceRecordBtnClassifying: {
-    backgroundColor: 'rgba(59, 130, 246, 0.22)',
-    borderColor: '#3B82F6',
-  },
-  voiceBtnContent: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  voiceRecordBtnText: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: '#93C5FD',
-  },
-  categoryGrid: {
-    flexDirection: 'row',
-    gap: 6,
-  },
-  categoryTile: {
-    flex: 1,
-    minHeight: 88,
-    backgroundColor: '#1E293B',
-    borderWidth: 1.5,
-    borderColor: '#263554',
-    borderRadius: 14,
-    paddingVertical: 10,
-    paddingHorizontal: 2,
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 6,
-  },
-  categoryIcon: {
-    fontSize: 20,
-  },
-  categoryTileText: {
-    fontSize: 10,
-    lineHeight: 12.5,
-    fontWeight: '600',
-    color: '#F8FAFC',
-    textAlign: 'center',
-  },
-  subtagsContainer: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 6,
-  },
-  subtagPill: {
-    paddingVertical: 7,
-    paddingHorizontal: 11,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: '#263554',
-    backgroundColor: '#1E293B',
-  },
-  subtagPillActive: {
-    borderColor: '#FB923C',
-    backgroundColor: 'rgba(249, 115, 22, 0.22)',
-  },
-  subtagText: {
-    fontSize: 11.5,
-    lineHeight: 15,
-    fontWeight: '600',
-    color: '#F8FAFC',
-  },
-  subtagTextActive: {
-    color: '#FDBA74',
-    fontWeight: '700',
-  },
-  severityRow: {
-    flexDirection: 'row',
-    gap: 8,
-  },
-  severityPill: {
-    flex: 1,
-    height: 40,
-    borderRadius: 11,
-    borderWidth: 1,
-    borderColor: '#263554',
-    backgroundColor: '#1E293B',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  severityText: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: '#94A3B8',
-  },
-  photoActionRow: {
-    flexDirection: 'row',
-    gap: 10,
-  },
-  photoPickerBtn: {
-    flex: 1,
-    height: 44,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#2E4066',
-    backgroundColor: '#1E293B',
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-  },
-  photoPickerBtnText: {
-    fontSize: 12.5,
-    fontWeight: '600',
-    color: '#93C5FD',
-  },
-  photoPreviewWrapper: {
-    borderRadius: 14,
-    overflow: 'hidden',
-    borderWidth: 1,
-    borderColor: '#3B82F6',
-    height: 140,
-    position: 'relative',
-  },
-  photoPreviewImage: {
-    width: '100%',
-    height: '100%',
-  },
-  photoPreviewOverlay: {
-    position: 'absolute',
-    bottom: 8,
-    left: 8,
-    backgroundColor: 'rgba(15, 23, 42, 0.8)',
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 6,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 5,
-  },
-  photoPreviewOverlayText: {
-    color: '#86EFAC',
-    fontSize: 11,
-    fontWeight: '600',
-  },
-  textInput: {
-    height: 44,
-    borderRadius: 11,
-    borderWidth: 1,
-    borderColor: '#263554',
-    backgroundColor: '#1E293B',
-    paddingHorizontal: 12,
-    color: '#F8FAFC',
-    fontSize: 13,
-  },
-  fullReportFormButton: {
-    height: 44,
-    borderRadius: 12,
-    backgroundColor: '#1E293B',
-    borderWidth: 1.5,
-    borderColor: '#3B82F6',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: 8,
-  },
-  fullReportFormButtonText: {
-    fontSize: 13.5,
-    fontWeight: '700',
-    color: '#93C5FD',
-  },
-  submitButton: {
-    height: 46,
-    borderRadius: 12,
-    backgroundColor: '#2563EB',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginTop: 4,
-    shadowColor: '#2563EB',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 4,
-  },
-  submitButtonDisabled: {
-    opacity: 0.7,
-  },
-  submittingRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  submitButtonText: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: '#FFFFFF',
-  },
-  luxStatusBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 8,
-    gap: 5,
-  },
-  luxBadgeDark: {
-    backgroundColor: 'rgba(168, 85, 247, 0.18)',
-    borderWidth: 1,
-    borderColor: 'rgba(168, 85, 247, 0.4)',
-  },
-  luxBadgeLit: {
-    backgroundColor: 'rgba(16, 185, 129, 0.18)',
-    borderWidth: 1,
-    borderColor: 'rgba(16, 185, 129, 0.4)',
-  },
-  luxStatusDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-  },
-  luxStatusBadgeText: {
-    fontSize: 11,
-    fontWeight: '700',
-  },
-  luxMeterCard: {
-    borderRadius: 12,
-    padding: 12,
-    borderWidth: 1,
-  },
-  luxMeterCardDark: {
-    backgroundColor: 'rgba(168, 85, 247, 0.08)',
-    borderColor: 'rgba(168, 85, 247, 0.3)',
-  },
-  luxMeterCardLit: {
-    backgroundColor: 'rgba(16, 185, 129, 0.08)',
-    borderColor: 'rgba(16, 185, 129, 0.3)',
-  },
-  luxMeterHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    marginBottom: 10,
-  },
-  luxIconWrap: {
+  closeBtn: {
     width: 36,
     height: 36,
-    borderRadius: 9,
-    backgroundColor: '#1E293B',
+    borderRadius: 12,
+    borderWidth: 1,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  luxMeterTitle: {
-    color: '#F8FAFC',
-    fontSize: 13,
+  closeText: {
+    fontSize: 15,
     fontWeight: '700',
-    marginBottom: 2,
   },
-  luxMeterSubtext: {
-    color: '#94A3B8',
-    fontSize: 11,
-    lineHeight: 15,
-  },
-  luxBarTrack: {
-    height: 8,
-    backgroundColor: '#0F172A',
-    borderRadius: 4,
-    overflow: 'hidden',
-    marginTop: 2,
-    marginBottom: 6,
-  },
-  luxBarFill: {
-    height: '100%',
-    borderRadius: 4,
-  },
-  luxBarScaleRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  luxBarScaleText: {
-    fontSize: 10,
-    color: '#64748B',
-  },
-  luxBarScaleThreshold: {
-    fontSize: 10,
-    fontWeight: '600',
-    color: '#C084FC',
-  },
-  luxFallbackCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    backgroundColor: 'rgba(245, 158, 11, 0.1)',
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: 'rgba(245, 158, 11, 0.25)',
-    padding: 12,
-  },
-  luxFallbackTitle: {
-    color: '#FCD34D',
+  sectionLabel: {
     fontSize: 12.5,
-    fontWeight: '600',
-    marginBottom: 2,
+    fontWeight: '500',
+    marginTop: 2,
   },
-  luxFallbackSubtext: {
+  catRow: {
+    flexDirection: 'row',
+    gap: 6,
+  },
+  catCard: {
+    flex: 1,
+    borderRadius: 14,
+    borderWidth: 1,
+    paddingVertical: 10,
+    paddingHorizontal: 4,
+    alignItems: 'center',
+    gap: 6,
+  },
+  catIconBox: {
+    width: 34,
+    height: 34,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  catTitle: {
+    fontSize: 10.5,
+    fontWeight: '700',
+    textAlign: 'center',
+    lineHeight: 13,
+  },
+  catSub: {
+    fontSize: 9.5,
+    textAlign: 'center',
+    lineHeight: 12,
+  },
+  voiceCard: {
+    borderRadius: 16,
+    borderWidth: 1,
+    padding: 14,
+    gap: 10,
+  },
+  voiceTopRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 8,
+  },
+  voiceTitle: {
+    fontSize: 13.5,
+    fontWeight: '700',
+    flex: 1,
+  },
+  timerBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 8,
+    backgroundColor: 'rgba(15, 23, 42, 0.7)',
+    borderWidth: 1,
+    borderColor: '#293C60',
+  },
+  timerBadgeText: {
     color: '#CBD5E1',
     fontSize: 11,
-    lineHeight: 14,
+    fontWeight: '700',
   },
-  luxLoadingCard: {
+  langRow: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  langPill: {
+    paddingHorizontal: 12,
+    paddingVertical: 5,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: '#283A5E',
+    backgroundColor: '#111A2E',
+  },
+  langPillActive: {
+    borderColor: '#3B82F6',
+    backgroundColor: 'rgba(59, 130, 246, 0.2)',
+  },
+  langPillText: {
+    color: '#94A3B8',
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  langPillTextActive: {
+    color: '#93C5FD',
+  },
+  recordBtn: {
+    height: 46,
+    borderRadius: 12,
+    backgroundColor: '#3B82F6',
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     gap: 8,
-    backgroundColor: '#1E293B',
-    borderRadius: 12,
-    padding: 12,
-    borderWidth: 1,
-    borderColor: '#263554',
   },
-  luxLoadingText: {
-    color: '#94A3B8',
+  recordBtnText: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  attachmentRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    padding: 8,
+    borderRadius: 12,
+    backgroundColor: 'rgba(59, 130, 246, 0.12)',
+    borderWidth: 1,
+    borderColor: 'rgba(59, 130, 246, 0.35)',
+  },
+  thumbPreview: {
+    width: 40,
+    height: 40,
+    borderRadius: 8,
+  },
+  aiDetectedLine: {
+    color: '#BFDBFE',
     fontSize: 12,
+    fontWeight: '600',
+  },
+  bottomBtnRow: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  secondaryActionBtn: {
+    flex: 1,
+    height: 44,
+    borderRadius: 12,
+    borderWidth: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+  },
+  secondaryActionText: {
+    fontSize: 13.5,
+    fontWeight: '700',
+  },
+  fullFormBtn: {
+    flex: 1,
+    height: 44,
+    borderRadius: 12,
+    borderWidth: 1.5,
+    borderColor: '#3B82F6',
+    backgroundColor: 'rgba(59, 130, 246, 0.16)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  fullFormBtnText: {
+    color: '#93C5FD',
+    fontSize: 13.5,
+    fontWeight: '700',
+  },
+  quickSubmitBtn: {
+    height: 44,
+    borderRadius: 12,
+    backgroundColor: '#10B981',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  quickSubmitText: {
+    color: '#06281E',
+    fontSize: 14,
+    fontWeight: '800',
   },
 });
 

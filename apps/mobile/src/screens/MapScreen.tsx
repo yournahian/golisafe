@@ -1271,12 +1271,18 @@ export default function MapScreen() {
   const hasActiveModalFilters =
     hazardFilters.severity !== 'all' ||
     hazardFilters.verifiedOnly ||
-    hazardFilters.maxDistanceKm !== null;
+    hazardFilters.maxDistanceKm !== null ||
+    (hazardFilters.trust && hazardFilters.trust !== 'all') ||
+    (hazardFilters.status && hazardFilters.status !== 'all');
 
   const filteredHazards = useMemo(() => {
-    let list = hazards.filter(
-      (h) => h.status !== 'resolved' && h.status !== 'expired',
-    );
+    const statusFilter = hazardFilters.status ?? 'all';
+    let list =
+      statusFilter === 'all' || statusFilter === 'active'
+        ? hazards.filter(
+            (h) => h.status !== 'resolved' && h.status !== 'expired',
+          )
+        : hazards.filter((h) => h.status === statusFilter);
 
     if (viewMode === 'pedestrian_night') {
       list = list.filter(
@@ -1312,7 +1318,21 @@ export default function MapScreen() {
       list = list.filter((h) => h.severity === 'Low');
     }
 
-    if (hazardFilters.verifiedOnly) {
+    if (hazardFilters.trust === 'reported') {
+      list = list.filter(
+        (h) =>
+          h.status !== 'crowd_verified' &&
+          h.status !== 'verified' &&
+          (h.confirmations ?? 0) < 3,
+      );
+    } else if (hazardFilters.trust === 'verified') {
+      list = list.filter(
+        (h) => h.status === 'verified' || (h.confirmations ?? 0) >= 5,
+      );
+    } else if (
+      hazardFilters.verifiedOnly ||
+      hazardFilters.trust === 'crowd_verified'
+    ) {
       list = list.filter(
         (h) =>
           h.status === 'crowd_verified' ||
@@ -3211,6 +3231,7 @@ export default function MapScreen() {
           ...h,
           image_url: h.image_url ?? undefined,
         }))}
+        userLocation={userLocation}
         isDarkMode={isNighttime}
         language={locale}
         onSelectHazard={(hazard) => {
@@ -3218,6 +3239,11 @@ export default function MapScreen() {
           clearSafeRoute();
           setSelectedHazardId(hazard.id);
           setDetailsHazardId(hazard.id);
+        }}
+        onOpenReport={() => {
+          setAlertsSheetOpen(false);
+          setFullReportDraft(null);
+          setFullReportVisible(true);
         }}
       />
 
@@ -3382,6 +3408,13 @@ export default function MapScreen() {
         onClose={() => setFilterModalOpen(false)}
         filters={hazardFilters}
         onApply={(nextFilters) => setHazardFilters(nextFilters)}
+        viewMode={viewMode}
+        onChangeViewMode={(nextMode) => {
+          setViewMode(nextMode);
+          if (nextMode === 'driver_biker') setDriverBypassDismissed(false);
+        }}
+        categoryFilter={categoryFilter}
+        onChangeCategoryFilter={(nextCat) => setCategoryFilter(nextCat)}
         isDark={isNighttime}
         language={locale}
       />
@@ -3397,6 +3430,8 @@ export default function MapScreen() {
               }
             : null
         }
+        locationLabel={tappedLocation?.label ?? null}
+        distanceText={tappedLocation?.distanceText ?? null}
         onClose={() => {
           setReportModalVisible(false);
         }}

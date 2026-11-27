@@ -1,25 +1,29 @@
-import React, { useEffect, useState } from 'react';
+import React from 'react';
 import {
   Modal,
-  ScrollView,
+  Platform,
   StyleSheet,
   Text,
   TouchableOpacity,
   View,
 } from 'react-native';
-import AppIcon from '../AppIcon';
+import type { HazardCategory } from '../../../../../packages/shared/api-contract';
 import type { Language } from '../../i18n/translations';
 
 export interface HazardFilterState {
   severity: 'all' | 'high' | 'medium' | 'low';
   verifiedOnly: boolean;
   maxDistanceKm: number | null;
+  trust?: 'all' | 'reported' | 'crowd_verified' | 'verified';
+  status?: 'all' | 'active' | 'resolved' | 'expired';
 }
 
 export const DEFAULT_HAZARD_FILTERS: HazardFilterState = {
   severity: 'all',
   verifiedOnly: false,
   maxDistanceKm: null,
+  trust: 'all',
+  status: 'all',
 };
 
 export interface FilterModalProps {
@@ -27,431 +31,262 @@ export interface FilterModalProps {
   onClose: () => void;
   filters?: HazardFilterState;
   onApply: (newFilters: HazardFilterState) => void;
+  viewMode?: 'all' | 'pedestrian_night' | 'driver_biker';
+  onChangeViewMode?: (mode: 'all' | 'pedestrian_night' | 'driver_biker') => void;
+  categoryFilter?: 'all' | HazardCategory;
+  onChangeCategoryFilter?: (cat: 'all' | HazardCategory) => void;
   isDark?: boolean;
   language?: Language;
 }
-
-const UI_COPY = {
-  en: {
-    title: 'Filter Hazards',
-    severitySection: 'RISK SEVERITY',
-    verificationSection: 'VERIFICATION STATUS',
-    distanceSection: 'DISTANCE RADIUS',
-    severityAll: 'All',
-    severityHigh: 'High Risk',
-    severityMedium: 'Medium Risk',
-    severityLow: 'Low Risk',
-    allReports: 'All Reports',
-    verifiedOnly: 'Crowd-Verified Only ✅',
-    distanceAll: 'All Dhaka',
-    distance1km: 'Within 1 km',
-    distance3km: 'Within 3 km',
-    distance5km: 'Within 5 km',
-    reset: 'Reset',
-    apply: 'Apply Filters',
-  },
-  bn: {
-    title: 'ঝুঁকি ফিল্টার',
-    severitySection: 'ঝুঁকির মাত্রা',
-    verificationSection: 'যাচাইয়ের অবস্থা',
-    distanceSection: 'দূরত্ব সীমা',
-    severityAll: 'সব',
-    severityHigh: 'উচ্চ ঝুঁকি',
-    severityMedium: 'মাঝারি ঝুঁকি',
-    severityLow: 'কম ঝুঁকি',
-    allReports: 'সব রিপোর্ট',
-    verifiedOnly: 'জনতা যাচাইকৃত কেবল ✅',
-    distanceAll: 'সমগ্র ঢাকা',
-    distance1km: '১ কিমি এর মধ্যে',
-    distance3km: '৩ কিমি এর মধ্যে',
-    distance5km: '৫ কিমি এর মধ্যে',
-    reset: 'রিসেট',
-    apply: 'ফিল্টার প্রয়োগ',
-  },
-};
 
 export const FilterModal: React.FC<FilterModalProps> = ({
   visible,
   onClose,
   filters = DEFAULT_HAZARD_FILTERS,
   onApply,
+  viewMode = 'all',
+  onChangeViewMode,
+  categoryFilter = 'all',
+  onChangeCategoryFilter,
   isDark = true,
   language = 'en',
 }) => {
-  const [draftFilters, setDraftFilters] = useState<HazardFilterState>(filters);
-
-  useEffect(() => {
-    if (visible) {
-      setDraftFilters(filters);
-    }
-  }, [visible, filters]);
-
-  const copy = UI_COPY[language] || UI_COPY.en;
+  const bn = language === 'bn';
+  const trustValue = filters.trust ?? (filters.verifiedOnly ? 'crowd_verified' : 'all');
+  const statusValue = filters.status ?? 'all';
 
   const theme = isDark
     ? {
-        backdrop: 'rgba(15, 23, 42, 0.75)',
-        sheetBg: '#161D2C',
-        cardBg: '#1E293B',
-        cardBorder: '#334155',
-        activeChipBg: 'rgba(59, 130, 246, 0.22)',
-        activeChipBorder: '#3B82F6',
-        activeChipText: '#60A5FA',
-        chipText: '#CBD5E1',
-        textPrimary: '#F8FAFC',
-        textSecondary: '#94A3B8',
-        border: '#263554',
-        dragHandle: '#334155',
-        resetBtnBg: '#1E293B',
-        resetBtnBorder: '#334155',
-        resetBtnText: '#E2E8F0',
-        applyBtnBg: '#3B82F6',
-        applyBtnText: '#FFFFFF',
-        closeBtnBg: '#1E293B',
-        closeBtnBorder: '#334155',
-        closeBtnText: '#F1F5F9',
+        backdrop: 'rgba(6, 11, 23, 0.45)',
+        cardBg: '#0E172A',
+        cardBorder: '#1F3050',
+        pillBg: '#162138',
+        pillBorder: '#283A5E',
+        pillText: '#CBD5E1',
+        activeBg: 'rgba(59, 130, 246, 0.2)',
+        activeBorder: '#3B82F6',
+        activeText: '#93C5FD',
+        title: '#F8FAFC',
+        closeBg: '#162138',
+        closeBorder: '#283A5E',
+        closeText: '#E2E8F0',
       }
     : {
-        backdrop: 'rgba(15, 23, 42, 0.45)',
-        sheetBg: '#FFFFFF',
-        cardBg: '#F8FAFC',
-        cardBorder: '#E2E8F0',
-        activeChipBg: '#EFF6FF',
-        activeChipBorder: '#2563EB',
-        activeChipText: '#2563EB',
-        chipText: '#475569',
-        textPrimary: '#0F172A',
-        textSecondary: '#64748B',
-        border: '#E2E8F0',
-        dragHandle: '#CBD5E1',
-        resetBtnBg: '#F1F5F9',
-        resetBtnBorder: '#E2E8F0',
-        resetBtnText: '#475569',
-        applyBtnBg: '#3B82F6',
-        applyBtnText: '#FFFFFF',
-        closeBtnBg: '#F1F5F9',
-        closeBtnBorder: '#CBD5E1',
-        closeBtnText: '#64748B',
+        backdrop: 'rgba(15, 23, 42, 0.3)',
+        cardBg: '#FFFFFF',
+        cardBorder: '#CBD5E1',
+        pillBg: '#F1F5F9',
+        pillBorder: '#CBD5E1',
+        pillText: '#334155',
+        activeBg: '#EFF6FF',
+        activeBorder: '#2563EB',
+        activeText: '#2563EB',
+        title: '#0F172A',
+        closeBg: '#F1F5F9',
+        closeBorder: '#CBD5E1',
+        closeText: '#334155',
       };
 
-  const handleReset = () => {
-    setDraftFilters(DEFAULT_HAZARD_FILTERS);
-  };
+  const renderPill = (
+    key: string,
+    label: string,
+    active: boolean,
+    onPress: () => void,
+  ) => (
+    <TouchableOpacity
+      key={key}
+      onPress={onPress}
+      activeOpacity={0.8}
+      style={[
+        styles.pill,
+        {
+          backgroundColor: active ? theme.activeBg : theme.pillBg,
+          borderColor: active ? theme.activeBorder : theme.pillBorder,
+        },
+      ]}
+    >
+      <Text
+        style={[
+          styles.pillText,
+          { color: active ? theme.activeText : theme.pillText },
+          active && { fontWeight: '700' },
+        ]}
+      >
+        {label}
+      </Text>
+    </TouchableOpacity>
+  );
 
-  const handleApply = () => {
-    onApply(draftFilters);
-    onClose();
-  };
-
-  const severityOptions: Array<{
-    id: HazardFilterState['severity'];
-    label: string;
-  }> = [
-    { id: 'all', label: copy.severityAll },
-    { id: 'high', label: copy.severityHigh },
-    { id: 'medium', label: copy.severityMedium },
-    { id: 'low', label: copy.severityLow },
-  ];
-
-  const distanceOptions: Array<{
-    id: HazardFilterState['maxDistanceKm'];
-    label: string;
-  }> = [
-    { id: null, label: copy.distanceAll },
-    { id: 1, label: copy.distance1km },
-    { id: 3, label: copy.distance3km },
-    { id: 5, label: copy.distance5km },
-  ];
+  const topOffset = Platform.OS === 'android' ? 148 : 186;
 
   return (
     <Modal
       visible={visible}
       transparent
-      animationType="slide"
+      animationType="fade"
       onRequestClose={onClose}
     >
-      <View style={[styles.backdrop, { backgroundColor: theme.backdrop }]}>
+      <TouchableOpacity
+        style={[styles.backdrop, { backgroundColor: theme.backdrop }]}
+        activeOpacity={1}
+        onPress={onClose}
+      >
         <TouchableOpacity
-          style={styles.backdropDismiss}
           activeOpacity={1}
-          onPress={onClose}
-        />
-
-        <View
+          onPress={() => {}}
           style={[
-            styles.sheetContainer,
+            styles.popoverCard,
             {
-              backgroundColor: theme.sheetBg,
-              borderColor: theme.border,
+              marginTop: topOffset,
+              backgroundColor: theme.cardBg,
+              borderColor: theme.cardBorder,
             },
           ]}
         >
-          {/* Top Drag Indicator */}
-          <View
-            style={[styles.dragHandle, { backgroundColor: theme.dragHandle }]}
-          />
-
-          {/* Header */}
-          <View style={[styles.header, { borderBottomColor: theme.border }]}>
-            <View style={styles.titleRow}>
-              <AppIcon
-                name="options-outline"
-                size={20}
-                color={theme.activeChipText}
-              />
-              <Text style={[styles.title, { color: theme.textPrimary }]}>
-                {copy.title}
-              </Text>
-            </View>
-
+          <View style={styles.headerRow}>
+            <Text style={[styles.title, { color: theme.title }]}>
+              {bn ? 'ফিল্টার' : 'Filters'}
+            </Text>
             <TouchableOpacity
               onPress={onClose}
               style={[
-                styles.closeButton,
+                styles.closeBtn,
                 {
-                  backgroundColor: theme.closeBtnBg,
-                  borderColor: theme.closeBtnBorder,
+                  backgroundColor: theme.closeBg,
+                  borderColor: theme.closeBorder,
                 },
               ]}
-              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-              accessibilityLabel="Close filter modal"
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
             >
-              <Text
-                style={[styles.closeButtonText, { color: theme.closeBtnText }]}
-              >
+              <Text style={[styles.closeText, { color: theme.closeText }]}>
                 ✕
               </Text>
             </TouchableOpacity>
           </View>
 
-          <ScrollView
-            showsVerticalScrollIndicator={false}
-            contentContainerStyle={styles.scrollContent}
-          >
-            <View style={styles.section}>
-              <Text
-                style={[styles.sectionLabel, { color: theme.textSecondary }]}
-              >
-                {copy.severitySection}
-              </Text>
-              <View style={styles.chipRow}>
-                {severityOptions.map((opt) => {
-                  const isActive = draftFilters.severity === opt.id;
-                  return (
-                    <TouchableOpacity
-                      key={opt.id}
-                      style={[
-                        styles.chip,
-                        {
-                          backgroundColor: theme.cardBg,
-                          borderColor: theme.cardBorder,
-                        },
-                        isActive && {
-                          backgroundColor: theme.activeChipBg,
-                          borderColor: theme.activeChipBorder,
-                        },
-                      ]}
-                      onPress={() =>
-                        setDraftFilters((prev) => ({
-                          ...prev,
-                          severity: opt.id,
-                        }))
-                      }
-                      activeOpacity={0.75}
-                    >
-                      <Text
-                        style={[
-                          styles.chipText,
-                          { color: theme.chipText },
-                          isActive && {
-                            color: theme.activeChipText,
-                            fontWeight: '700',
-                          },
-                        ]}
-                      >
-                        {opt.label}
-                      </Text>
-                    </TouchableOpacity>
-                  );
-                })}
-              </View>
-            </View>
-
-            <View style={styles.section}>
-              <Text
-                style={[styles.sectionLabel, { color: theme.textSecondary }]}
-              >
-                {copy.verificationSection}
-              </Text>
-              <View style={styles.toggleRow}>
-                <TouchableOpacity
-                  style={[
-                    styles.toggleBtn,
-                    {
-                      backgroundColor: theme.cardBg,
-                      borderColor: theme.cardBorder,
-                    },
-                    !draftFilters.verifiedOnly && {
-                      backgroundColor: theme.activeChipBg,
-                      borderColor: theme.activeChipBorder,
-                    },
-                  ]}
-                  onPress={() =>
-                    setDraftFilters((prev) => ({
-                      ...prev,
-                      verifiedOnly: false,
-                    }))
-                  }
-                  activeOpacity={0.75}
-                >
-                  <Text
-                    style={[
-                      styles.toggleText,
-                      { color: theme.chipText },
-                      !draftFilters.verifiedOnly && {
-                        color: theme.activeChipText,
-                        fontWeight: '700',
-                      },
-                    ]}
-                  >
-                    {copy.allReports}
-                  </Text>
-                </TouchableOpacity>
-
-                <TouchableOpacity
-                  style={[
-                    styles.toggleBtn,
-                    {
-                      backgroundColor: theme.cardBg,
-                      borderColor: theme.cardBorder,
-                    },
-                    draftFilters.verifiedOnly && {
-                      backgroundColor: theme.activeChipBg,
-                      borderColor: theme.activeChipBorder,
-                    },
-                  ]}
-                  onPress={() =>
-                    setDraftFilters((prev) => ({
-                      ...prev,
-                      verifiedOnly: true,
-                    }))
-                  }
-                  activeOpacity={0.75}
-                >
-                  <Text
-                    style={[
-                      styles.toggleText,
-                      { color: theme.chipText },
-                      draftFilters.verifiedOnly && {
-                        color: theme.activeChipText,
-                        fontWeight: '700',
-                      },
-                    ]}
-                  >
-                    {copy.verifiedOnly}
-                  </Text>
-                </TouchableOpacity>
-              </View>
-            </View>
-
-            <View style={styles.section}>
-              <Text
-                style={[styles.sectionLabel, { color: theme.textSecondary }]}
-              >
-                {copy.distanceSection}
-              </Text>
-              <View style={styles.chipRow}>
-                {distanceOptions.map((opt) => {
-                  const isActive = draftFilters.maxDistanceKm === opt.id;
-                  return (
-                    <TouchableOpacity
-                      key={String(opt.id)}
-                      style={[
-                        styles.chip,
-                        {
-                          backgroundColor: theme.cardBg,
-                          borderColor: theme.cardBorder,
-                        },
-                        isActive && {
-                          backgroundColor: theme.activeChipBg,
-                          borderColor: theme.activeChipBorder,
-                        },
-                      ]}
-                      onPress={() =>
-                        setDraftFilters((prev) => ({
-                          ...prev,
-                          maxDistanceKm: opt.id,
-                        }))
-                      }
-                      activeOpacity={0.75}
-                    >
-                      <Text
-                        style={[
-                          styles.chipText,
-                          { color: theme.chipText },
-                          isActive && {
-                            color: theme.activeChipText,
-                            fontWeight: '700',
-                          },
-                        ]}
-                      >
-                        {opt.label}
-                      </Text>
-                    </TouchableOpacity>
-                  );
-                })}
-              </View>
-            </View>
-          </ScrollView>
-
-          <View style={[styles.actionRow, { borderTopColor: theme.border }]}>
-            <TouchableOpacity
-              style={[
-                styles.resetButton,
-                {
-                  backgroundColor: theme.resetBtnBg,
-                  borderColor: theme.resetBtnBorder,
-                },
-              ]}
-              onPress={handleReset}
-              activeOpacity={0.8}
-            >
-              <AppIcon
-                name="refresh-outline"
-                size={16}
-                color={theme.resetBtnText}
-              />
-              <Text
-                style={[styles.resetButtonText, { color: theme.resetBtnText }]}
-              >
-                {copy.reset}
-              </Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={[
-                styles.applyButton,
-                {
-                  backgroundColor: theme.applyBtnBg,
-                },
-              ]}
-              onPress={handleApply}
-              activeOpacity={0.85}
-            >
-              <AppIcon
-                name="checkmark-circle-outline"
-                size={18}
-                color={theme.applyBtnText}
-              />
-              <Text
-                style={[styles.applyButtonText, { color: theme.applyBtnText }]}
-              >
-                {copy.apply}
-              </Text>
-            </TouchableOpacity>
+          {/* Row 1: Mode (All | Night walk | Driver) */}
+          <View style={styles.pillRow}>
+            {renderPill('mode-all', bn ? 'সব' : 'All', viewMode === 'all', () =>
+              onChangeViewMode?.('all'),
+            )}
+            {renderPill(
+              'mode-night',
+              bn ? 'নাইট ওয়াক' : 'Night walk',
+              viewMode === 'pedestrian_night',
+              () => onChangeViewMode?.('pedestrian_night'),
+            )}
+            {renderPill(
+              'mode-driver',
+              bn ? 'ড্রাইভার' : 'Driver',
+              viewMode === 'driver_biker',
+              () => onChangeViewMode?.('driver_biker'),
+            )}
           </View>
-        </View>
-      </View>
+
+          {/* Row 2: Trust (All trust | Reported | Crowd-Verified | Verified) */}
+          <View style={styles.pillRow}>
+            {renderPill(
+              'trust-all',
+              bn ? 'সব ট্রাস্ট' : 'All trust',
+              trustValue === 'all',
+              () => onApply({ ...filters, trust: 'all', verifiedOnly: false }),
+            )}
+            {renderPill(
+              'trust-reported',
+              bn ? 'রিপোর্টকৃত' : 'Reported',
+              trustValue === 'reported',
+              () =>
+                onApply({ ...filters, trust: 'reported', verifiedOnly: false }),
+            )}
+            {renderPill(
+              'trust-crowd',
+              bn ? 'জনতা যাচাইকৃত' : 'Crowd-Verified',
+              trustValue === 'crowd_verified',
+              () =>
+                onApply({
+                  ...filters,
+                  trust: 'crowd_verified',
+                  verifiedOnly: true,
+                }),
+            )}
+            {renderPill(
+              'trust-verified',
+              bn ? 'যাচাইকৃত' : 'Verified',
+              trustValue === 'verified',
+              () =>
+                onApply({ ...filters, trust: 'verified', verifiedOnly: true }),
+            )}
+          </View>
+
+          {/* Row 3: Status (All status | Active | Resolved | Expired) */}
+          <View style={styles.pillRow}>
+            {renderPill(
+              'status-all',
+              bn ? 'সব স্ট্যাটাস' : 'All status',
+              statusValue === 'all',
+              () => onApply({ ...filters, status: 'all' }),
+            )}
+            {renderPill(
+              'status-active',
+              bn ? 'সক্রিয়' : 'Active',
+              statusValue === 'active',
+              () => onApply({ ...filters, status: 'active' }),
+            )}
+            {renderPill(
+              'status-resolved',
+              bn ? 'সমাধান হয়েছে' : 'Resolved',
+              statusValue === 'resolved',
+              () => onApply({ ...filters, status: 'resolved' }),
+            )}
+            {renderPill(
+              'status-expired',
+              bn ? 'মেয়াদোত্তীর্ণ' : 'Expired',
+              statusValue === 'expired',
+              () => onApply({ ...filters, status: 'expired' }),
+            )}
+          </View>
+
+          {/* Row 4: Categories */}
+          <View style={styles.pillRow}>
+            {renderPill(
+              'cat-all',
+              bn ? 'সব ক্যাটাগরি' : 'All categories',
+              categoryFilter === 'all',
+              () => onChangeCategoryFilter?.('all'),
+            )}
+            {renderPill(
+              'cat-chanda',
+              'ChandaAlert',
+              categoryFilter === 'extortion_spot',
+              () => onChangeCategoryFilter?.('extortion_spot'),
+            )}
+            {renderPill(
+              'cat-dark',
+              'Dark-Zone Safety',
+              categoryFilter === 'unlit_alley',
+              () => onChangeCategoryFilter?.('unlit_alley'),
+            )}
+            {renderPill(
+              'cat-water',
+              'WaterLog',
+              categoryFilter === 'waterlogging',
+              () => onChangeCategoryFilter?.('waterlogging'),
+            )}
+            {renderPill(
+              'cat-road',
+              'Road Hazard',
+              categoryFilter === 'pothole_manhole',
+              () => onChangeCategoryFilter?.('pothole_manhole'),
+            )}
+            {renderPill(
+              'cat-crossing',
+              'Safe Crossing',
+              categoryFilter === 'unsafe_footbridge',
+              () => onChangeCategoryFilter?.('unsafe_footbridge'),
+            )}
+          </View>
+        </TouchableOpacity>
+      </TouchableOpacity>
     </Modal>
   );
 };
@@ -459,154 +294,55 @@ export const FilterModal: React.FC<FilterModalProps> = ({
 const styles = StyleSheet.create({
   backdrop: {
     flex: 1,
-    justifyContent: 'flex-end',
+    paddingHorizontal: 14,
   },
-  backdropDismiss: {
-    flex: 1,
-  },
-  sheetContainer: {
-    borderTopLeftRadius: 24,
-    borderTopRightRadius: 24,
-    borderTopWidth: 1.5,
-    borderLeftWidth: 1,
-    borderRightWidth: 1,
-    maxHeight: '85%',
+  popoverCard: {
+    borderRadius: 18,
+    borderWidth: 1,
+    padding: 16,
+    gap: 12,
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: -8 },
     shadowOpacity: 0.35,
-    shadowRadius: 18,
-    elevation: 24,
-    paddingBottom: 28,
+    shadowRadius: 14,
+    shadowOffset: { width: 0, height: 8 },
+    elevation: 10,
   },
-  dragHandle: {
-    width: 38,
-    height: 4,
-    borderRadius: 2,
-    alignSelf: 'center',
-    marginTop: 10,
-    marginBottom: 8,
-  },
-  header: {
+  headerRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: 18,
-    paddingVertical: 12,
-    borderBottomWidth: 1,
-  },
-  titleRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
+    marginBottom: 2,
   },
   title: {
-    fontSize: 17,
+    fontSize: 16,
     fontWeight: '700',
-    lineHeight: 22,
-    letterSpacing: -0.2,
   },
-  closeButton: {
+  closeBtn: {
     width: 32,
     height: 32,
-    borderRadius: 8,
+    borderRadius: 10,
     borderWidth: 1,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  closeButtonText: {
+  closeText: {
     fontSize: 14,
     fontWeight: '700',
-    lineHeight: 18,
   },
-  scrollContent: {
-    paddingHorizontal: 16,
-    paddingTop: 14,
-    paddingBottom: 16,
-    gap: 18,
-  },
-  section: {
-    gap: 8,
-  },
-  sectionLabel: {
-    fontSize: 11.5,
-    fontWeight: '600',
-    letterSpacing: 0.4,
-    textTransform: 'uppercase',
-  },
-  chipRow: {
+  pillRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: 8,
   },
-  chip: {
-    paddingVertical: 9,
-    paddingHorizontal: 14,
-    borderRadius: 12,
-    borderWidth: 1.5,
-    alignItems: 'center',
-    justifyContent: 'center',
+  pill: {
+    paddingHorizontal: 13,
+    paddingVertical: 7,
+    borderRadius: 999,
+    borderWidth: 1,
   },
-  chipText: {
-    fontSize: 13,
-    fontWeight: '600',
-  },
-  toggleRow: {
-    flexDirection: 'row',
-    gap: 8,
-  },
-  toggleBtn: {
-    flex: 1,
-    paddingVertical: 11,
-    paddingHorizontal: 12,
-    borderRadius: 12,
-    borderWidth: 1.5,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  toggleText: {
+  pillText: {
     fontSize: 12.5,
-    fontWeight: '600',
-    textAlign: 'center',
-  },
-  actionRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    paddingHorizontal: 16,
-    paddingTop: 14,
-    borderTopWidth: 1,
-  },
-  resetButton: {
-    flex: 1,
-    height: 48,
-    borderRadius: 14,
-    borderWidth: 1.5,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 6,
-  },
-  resetButtonText: {
-    fontSize: 14,
-    fontWeight: '600',
-  },
-  applyButton: {
-    flex: 2,
-    height: 48,
-    borderRadius: 14,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 6,
-    shadowColor: '#3B82F6',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 4,
-  },
-  applyButtonText: {
-    fontSize: 14,
-    fontWeight: '700',
+    fontWeight: '500',
   },
 });
 

@@ -1,15 +1,16 @@
 import React, { useMemo, useState } from 'react';
 import {
   FlatList,
-  Image,
   Modal,
   Platform,
   ScrollView,
+  StatusBar,
   StyleSheet,
   Text,
   TouchableOpacity,
   View,
 } from 'react-native';
+import Svg, { Circle, Ellipse, Path } from 'react-native-svg';
 import AppIcon from '../AppIcon';
 import type {
   HazardCategory,
@@ -28,15 +29,26 @@ export interface AlertsModalProps {
   visible: boolean;
   onClose: () => void;
   hazards: Hazard[];
+  userLocation?: { latitude: number; longitude: number };
   isDarkMode?: boolean;
   language?: 'en' | 'bn';
   onSelectHazard: (hazard: Hazard) => void;
+  onOpenReport?: () => void;
 }
+
+const MODULE_ORDER: HazardCategory[] = [
+  'extortion_spot',
+  'unlit_alley',
+  'waterlogging',
+  'pothole_manhole',
+  'unsafe_footbridge',
+];
 
 interface CategoryDisplayMeta {
   name: string;
   nameBn: string;
-  icon: string;
+  defaultTitle: string;
+  defaultTitleBn: string;
   color: string;
   lightColor: string;
   surface: string;
@@ -47,613 +59,592 @@ const CATEGORY_META: Record<HazardCategory, CategoryDisplayMeta> = {
   extortion_spot: {
     name: 'ChandaAlert',
     nameBn: 'চাঁদা সতর্কতা',
-    icon: '🛑',
-    color: '#EF4444',
+    defaultTitle: 'Forced collection reported',
+    defaultTitleBn: 'চাঁদাবাজির অভিযোগ পাওয়া গেছে',
+    color: '#F87171',
     lightColor: '#B91C1C',
-    surface: 'rgba(239, 68, 68, 0.18)',
+    surface: 'rgba(239, 68, 68, 0.16)',
     lightSurface: '#FEF2F2',
   },
   unlit_alley: {
     name: 'Dark-Zone Safety',
     nameBn: 'অন্ধকার গলি',
-    icon: '💡',
-    color: '#A855F7',
+    defaultTitle: 'Streetlight outage reported',
+    defaultTitleBn: 'স্ট্রিট লাইট নষ্টের অভিযোগ',
+    color: '#C084FC',
     lightColor: '#6D28D9',
-    surface: 'rgba(168, 85, 247, 0.18)',
+    surface: 'rgba(168, 85, 247, 0.16)',
     lightSurface: '#F5F3FF',
   },
   waterlogging: {
     name: 'WaterLog',
     nameBn: 'জলাবদ্ধতা',
-    icon: '🌊',
-    color: '#3B82F6',
+    defaultTitle: 'Road waterlogging reported',
+    defaultTitleBn: 'রাস্তায় জলাবদ্ধতা দেখা গেছে',
+    color: '#60A5FA',
     lightColor: '#2563EB',
-    surface: 'rgba(59, 130, 246, 0.18)',
+    surface: 'rgba(59, 130, 246, 0.16)',
     lightSurface: '#EFF6FF',
   },
   pothole_manhole: {
     name: 'Road Hazard',
     nameBn: 'সড়ক ঝুঁকি',
-    icon: '🕳️',
-    color: '#F59E0B',
+    defaultTitle: 'Open manhole reported',
+    defaultTitleBn: 'খোলা ম্যানহোল / গর্ত দেখা গেছে',
+    color: '#F87171',
     lightColor: '#B45309',
-    surface: 'rgba(245, 158, 11, 0.18)',
+    surface: 'rgba(248, 113, 113, 0.16)',
     lightSurface: '#FFFBEB',
   },
   unsafe_footbridge: {
     name: 'Safe Crossing',
     nameBn: 'নিরাপদ পারাপার',
-    icon: '🌉',
+    defaultTitle: 'Unsafe footbridge reported',
+    defaultTitleBn: 'অনিরাপদ ফুটব্রিজের অভিযোগ',
     color: '#FB923C',
     lightColor: '#C2410C',
-    surface: 'rgba(249, 115, 22, 0.18)',
+    surface: 'rgba(249, 115, 22, 0.16)',
     lightSurface: '#FFF7ED',
   },
 };
 
-const UI_TEXT = {
-  en: {
-    title: 'Active Alerts',
-    emptyTitle: 'No Active Alerts',
-    emptySubtitle: 'No matching hazards reported in this area.',
-    locateOnMap: 'Locate on Map',
-    verifiedBadge: 'Crowd-Verified',
-    confirmationSingular: '1 confirmation',
-    confirmationPlural: 'confirmations',
-    severityCritical: 'Critical Risk',
-    severityMedium: 'Moderate Risk',
-    severityLow: 'Low Risk',
-  },
-  bn: {
-    title: 'সতর্কতা তালিকা',
-    emptyTitle: 'কোনো সতর্কতা নেই',
-    emptySubtitle: 'এই এলাকায় কোনো সক্রিয় ঝুঁকি পাওয়া যায়নি।',
-    locateOnMap: 'মানচিত্রে দেখুন',
-    verifiedBadge: 'যাচাইকৃত',
-    confirmationSingular: '১ জন নিশ্চিত করেছেন',
-    confirmationPlural: 'জন নিশ্চিত করেছেন',
-    severityCritical: 'উচ্চ ঝুঁকি',
-    severityMedium: 'মাঝারি ঝুঁকি',
-    severityLow: 'স্বল্প ঝুঁকি',
-  },
-};
+function CategorySvgIcon({
+  category,
+  color,
+  size = 15,
+}: {
+  category: HazardCategory;
+  color: string;
+  size?: number;
+}) {
+  return (
+    <Svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke={color}
+      strokeWidth={2}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      {category === 'extortion_spot' && (
+        <>
+          <Path d="M8.2 3h7.6L21 8.2v7.6L15.8 21H8.2L3 15.8V8.2L8.2 3Z" />
+          <Path d="M12 7.5v5.5" />
+          <Circle cx={12} cy={16.2} r={0.8} fill={color} />
+        </>
+      )}
+      {category === 'unlit_alley' && (
+        <>
+          <Path d="M6 21V6.5a2.5 2.5 0 0 1 2.5-2.5H13" />
+          <Path d="M10.5 4h5l1.5 2.5h-8L10.5 4Z" />
+          <Path d="M4 21h5" />
+          <Path d="M16.5 10.5a3.5 3.5 0 1 0 3.5 4.2 2.8 2.8 0 0 1-3.5-4.2Z" />
+        </>
+      )}
+      {category === 'waterlogging' && (
+        <>
+          <Path d="M12 3.5 9.2 7.2a3.5 3.5 0 1 0 5.6 0L12 3.5Z" />
+          <Path d="M2.5 15c1.6 1.4 3.8 1.4 5.4 0 1.6-1.4 3.8-1.4 5.4 0 1.6 1.4 3.8 1.4 5.4 0 1.1-1 2.1-1.2 2.8-.8" />
+          <Path d="M2.5 19.5c1.6 1.4 3.8 1.4 5.4 0 1.6-1.4 3.8-1.4 5.4 0 1.6 1.4 3.8 1.4 5.4 0 1.1-1 2.1-1.2 2.8-.8" />
+        </>
+      )}
+      {category === 'pothole_manhole' && (
+        <>
+          <Path d="M7.5 3.5 3.5 20.5M16.5 3.5l4 17" />
+          <Ellipse cx={12} cy={14.5} rx={4.2} ry={2.6} />
+          <Path d="M12 4.5v3.5" />
+        </>
+      )}
+      {category === 'unsafe_footbridge' && (
+        <>
+          <Circle cx={12.5} cy={4.5} r={1.8} />
+          <Path d="M9.5 11.5 11.5 8h2l2 3.5" />
+          <Path d="m10.5 16.5 1.5-4.5 2 4.5" />
+          <Path d="M3.5 20h3M10.5 20h3M17.5 20h3" />
+        </>
+      )}
+    </Svg>
+  );
+}
+
+function calcDistanceMeters(
+  lat1: number,
+  lon1: number,
+  lat2: number,
+  lon2: number,
+): number {
+  const toRad = (d: number) => (d * Math.PI) / 180;
+  const R = 6371000;
+  const dLat = toRad(lat2 - lat1);
+  const dLon = toRad(lon2 - lon1);
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(toRad(lat1)) *
+      Math.cos(toRad(lat2)) *
+      Math.sin(dLon / 2) *
+      Math.sin(dLon / 2);
+  return Math.round(R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)));
+}
+
+function formatTimeAgo(iso?: string, bn = false): string {
+  if (!iso) return bn ? 'এইমাত্র' : 'just now';
+  const diffMin = Math.max(
+    1,
+    Math.round((Date.now() - new Date(iso).getTime()) / 60000),
+  );
+  if (diffMin < 60) return bn ? `${diffMin} মি. আগে` : `${diffMin} min ago`;
+  const hrs = Math.round(diffMin / 60);
+  if (hrs < 24) return bn ? `${hrs} ঘন্টা আগে` : `${hrs} hr ago`;
+  const days = Math.round(hrs / 24);
+  return bn ? `${days} দিন আগে` : `${days}d ago`;
+}
 
 export const AlertsModal: React.FC<AlertsModalProps> = ({
   visible,
   onClose,
   hazards,
-  isDarkMode = false,
+  userLocation,
+  isDarkMode = true,
   language = 'en',
   onSelectHazard,
+  onOpenReport,
 }) => {
   const isDark = Boolean(isDarkMode);
-  const copy = UI_TEXT[language] || UI_TEXT.en;
+  const bn = language === 'bn';
+  const [selectedCat, setSelectedCat] = useState<'all' | HazardCategory>('all');
 
-  // Sort hazards: High severity and crowd_verified appear at top
   const sortedHazards = useMemo(() => {
     return [...hazards].sort((a, b) => {
       const getPriorityScore = (h: Hazard): number => {
         let score = 0;
-        // Severity weighting
-        if (h.severity === 'Critical') score += 100;
-        else if (h.severity === 'Medium') score += 50;
-        else score += 10;
-
-        // Night priority boost for unlit alleys & unsafe footbridges (FR-21)
         if (
           isDark &&
           (h.category === 'unlit_alley' || h.category === 'unsafe_footbridge')
         ) {
-          score += 45;
+          score += 140;
         }
-
-        // Verified bonus weighting
-        if (h.status === 'crowd_verified') score += 30;
+        if (h.severity === 'Critical') score += 90;
+        else if (h.severity === 'Medium') score += 50;
+        else score += 20;
+        if (h.status === 'crowd_verified' || h.status === 'verified') score += 25;
         return score;
       };
-
       const diff = getPriorityScore(b) - getPriorityScore(a);
       if (diff !== 0) return diff;
-
-      // Secondary sort: most recent first
       const timeA = a.created_at ? new Date(a.created_at).getTime() : 0;
       const timeB = b.created_at ? new Date(b.created_at).getTime() : 0;
       return timeB - timeA;
     });
   }, [hazards, isDark]);
 
-  const [selectedCat, setSelectedCat] = useState<'all' | HazardCategory>('all');
-
   const visibleHazards = useMemo(() => {
     if (selectedCat === 'all') return sortedHazards;
     return sortedHazards.filter((h) => h.category === selectedCat);
   }, [sortedHazards, selectedCat]);
 
-  const theme = useMemo(() => {
-    if (isDark) {
-      return {
-        backdrop: 'rgba(11, 17, 32, 0.78)',
-        sheetBg: '#131C31',
-        sheetBorder: '#263554',
-        dragHandle: '#334155',
-        border: '#263554',
-        textPrimary: '#F8FAFC',
-        textSecondary: '#94A3B8',
-        cardBg: '#1B2642',
-        cardBorder: '#2E4066',
-        countBadgeBg: 'rgba(59, 130, 246, 0.22)',
-        countBadgeText: '#93C5FD',
-        closeBtnBg: '#1B2642',
-        closeBtnBorder: '#2E4066',
-        closeBtnText: '#F1F5F9',
-        verifiedBg: 'rgba(22, 163, 74, 0.22)',
-        verifiedBorder: 'rgba(74, 222, 128, 0.45)',
-        verifiedText: '#86EFAC',
-        locateBtnBg: '#2563EB',
-        locateBtnText: '#FFFFFF',
-        locateBtnBorder: '#3B82F6',
-        emptyIconColor: '#475569',
-      };
-    }
+  const theme = useMemo(
+    () =>
+      isDark
+        ? {
+            bg: '#09101E',
+            surface: '#111A2E',
+            surfaceElevated: '#16223A',
+            border: '#1E2D4A',
+            borderStrong: '#293C60',
+            text: '#F8FAFC',
+            textSecondary: '#94A3B8',
+            navBg: '#0B1222',
+            primary: '#3B82F6',
+            primarySurface: 'rgba(59, 130, 246, 0.18)',
+          }
+        : {
+            bg: '#F8FAFC',
+            surface: '#FFFFFF',
+            surfaceElevated: '#F1F5F9',
+            border: '#E2E8F0',
+            borderStrong: '#CBD5E1',
+            text: '#0F172A',
+            textSecondary: '#64748B',
+            navBg: '#FFFFFF',
+            primary: '#2563EB',
+            primarySurface: '#EFF6FF',
+          },
+    [isDark],
+  );
 
-    return {
-      backdrop: 'rgba(15, 23, 42, 0.45)',
-      sheetBg: '#FFFFFF',
-      sheetBorder: '#E2E8F0',
-      dragHandle: '#CBD5E1',
-      border: '#E2E8F0',
-      textPrimary: '#0F172A',
-      textSecondary: '#64748B',
-      cardBg: '#F8FAFC',
-      cardBorder: '#E2E8F0',
-      countBadgeBg: '#EFF6FF',
-      countBadgeText: '#2563EB',
-      closeBtnBg: '#F1F5F9',
-      closeBtnBorder: '#CBD5E1',
-      closeBtnText: '#64748B',
-      verifiedBg: '#DCFCE7',
-      verifiedBorder: '#86EFAC',
-      verifiedText: '#15803D',
-      locateBtnBg: '#2563EB',
-      locateBtnText: '#FFFFFF',
-      locateBtnBorder: '#2563EB',
-      emptyIconColor: '#CBD5E1',
-    };
-  }, [isDark]);
-
-  const getSeverityStyle = (severity: HazardSeverity) => {
+  const getRiskPill = (severity: HazardSeverity) => {
     if (severity === 'Critical') {
       return {
-        bg: isDark ? 'rgba(239, 68, 68, 0.22)' : '#FEF2F2',
-        border: isDark ? 'rgba(248, 113, 113, 0.45)' : '#FECACA',
+        bg: isDark ? 'rgba(239, 68, 68, 0.2)' : '#FEF2F2',
+        border: isDark ? 'rgba(248, 113, 113, 0.35)' : '#FECACA',
         text: isDark ? '#FCA5A5' : '#DC2626',
-        label: copy.severityCritical,
+        label: bn ? 'উচ্চ ঝুঁকি' : 'High risk',
       };
     }
     if (severity === 'Medium') {
       return {
         bg: isDark ? 'rgba(245, 158, 11, 0.2)' : '#FEF3C7',
-        border: isDark ? 'rgba(251, 191, 36, 0.45)' : '#FDE68A',
+        border: isDark ? 'rgba(251, 191, 36, 0.35)' : '#FDE68A',
         text: isDark ? '#FCD34D' : '#B45309',
-        label: copy.severityMedium,
+        label: bn ? 'মাঝারি ঝুঁকি' : 'Moderate risk',
       };
     }
     return {
-      bg: isDark ? 'rgba(34, 197, 94, 0.18)' : '#DCFCE7',
-      border: isDark ? 'rgba(74, 222, 128, 0.45)' : '#BBF7D0',
-      text: isDark ? '#86EFAC' : '#15803D',
-      label: copy.severityLow,
+      bg: isDark ? 'rgba(16, 185, 129, 0.18)' : '#DCFCE7',
+      border: isDark ? 'rgba(52, 211, 153, 0.35)' : '#BBF7D0',
+      text: isDark ? '#6EE7B7' : '#15803D',
+      label: bn ? 'কম ঝুঁকি' : 'Low risk',
     };
   };
 
-  const getConfirmationString = (item: Hazard): string => {
-    const rawCount =
-      typeof item.confirmations === 'number'
-        ? item.confirmations
-        : item.status === 'crowd_verified'
-          ? 3
-          : 1;
-
-    return rawCount === 1
-      ? copy.confirmationSingular
-      : `${rawCount} ${copy.confirmationPlural}`;
+  const getStatusBadge = (item: Hazard) => {
+    const count = item.confirmations ?? 0;
+    if (item.status === 'verified' || count >= 5) {
+      return {
+        bg: isDark ? 'rgba(16, 185, 129, 0.16)' : '#DCFCE7',
+        border: isDark ? 'rgba(52, 211, 153, 0.35)' : '#86EFAC',
+        text: isDark ? '#6EE7B7' : '#15803D',
+        icon: 'checkmark' as const,
+        label: bn ? 'যাচাইকৃত' : 'Verified',
+      };
+    }
+    if (item.status === 'crowd_verified' || count >= 3) {
+      return {
+        bg: isDark ? 'rgba(59, 130, 246, 0.18)' : '#EFF6FF',
+        border: isDark ? 'rgba(96, 165, 250, 0.35)' : '#BFDBFE',
+        text: isDark ? '#93C5FD' : '#2563EB',
+        icon: 'people-outline' as const,
+        label: bn ? 'জনতা যাচাইকৃত' : 'Crowd-Verified',
+      };
+    }
+    return {
+      bg: isDark ? 'rgba(148, 163, 184, 0.14)' : '#F1F5F9',
+      border: isDark ? 'rgba(148, 163, 184, 0.3)' : '#CBD5E1',
+      text: isDark ? '#CBD5E1' : '#475569',
+      icon: 'information-circle-outline' as const,
+      label: bn ? 'রিপোর্টকৃত' : 'Reported',
+    };
   };
 
-  const handleLocate = (hazard: Hazard) => {
-    onSelectHazard(hazard);
-    onClose();
-  };
+  const topInset = Platform.OS === 'android' ? 14 : 52;
 
   return (
     <Modal
       visible={visible}
-      transparent
       animationType="slide"
       onRequestClose={onClose}
     >
-      <View style={[styles.backdrop, { backgroundColor: theme.backdrop }]}>
-        <TouchableOpacity
-          style={styles.backdropDismiss}
-          activeOpacity={1}
-          onPress={onClose}
+      <View style={[styles.screen, { backgroundColor: theme.bg }]}>
+        <StatusBar
+          barStyle={isDark ? 'light-content' : 'dark-content'}
+          backgroundColor={theme.bg}
         />
 
+        {/* Top Bar: ← Nearby Alerts */}
+        <View style={[styles.topBar, { paddingTop: topInset }]}>
+          <TouchableOpacity
+            style={[
+              styles.backBtn,
+              {
+                backgroundColor: theme.surfaceElevated,
+                borderColor: theme.borderStrong,
+              },
+            ]}
+            onPress={onClose}
+            activeOpacity={0.8}
+          >
+            <Svg width={18} height={18} viewBox="0 0 24 24" fill="none">
+              <Path
+                d="M19 12H5M12 19l-7-7 7-7"
+                stroke={theme.text}
+                strokeWidth={2.2}
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </Svg>
+          </TouchableOpacity>
+          <Text style={[styles.topTitle, { color: theme.text }]}>
+            {bn ? 'আশপাশের সতর্কতা' : 'Nearby Alerts'}
+          </Text>
+        </View>
+
+        {/* Horizontal Category Filter Pills */}
+        <View style={styles.filterRowWrap}>
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.filterRowContent}
+          >
+            {MODULE_ORDER.map((cat) => {
+              const meta = CATEGORY_META[cat];
+              const active = selectedCat === cat;
+              const accent = isDark ? meta.color : meta.lightColor;
+              return (
+                <TouchableOpacity
+                  key={cat}
+                  onPress={() =>
+                    setSelectedCat((prev) => (prev === cat ? 'all' : cat))
+                  }
+                  style={[
+                    styles.catPill,
+                    {
+                      backgroundColor: active
+                        ? isDark
+                          ? meta.surface
+                          : meta.lightSurface
+                        : theme.surface,
+                      borderColor: active ? accent : theme.borderStrong,
+                    },
+                  ]}
+                  activeOpacity={0.8}
+                >
+                  <CategorySvgIcon category={cat} color={accent} size={15} />
+                  <Text
+                    style={[
+                      styles.catPillText,
+                      { color: active ? accent : theme.text },
+                    ]}
+                  >
+                    {bn ? meta.nameBn : meta.name}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </ScrollView>
+        </View>
+
+        {/* Night Mode Priority Banner (Figma SS4) */}
+        {isDark && (
+          <View style={styles.nightBanner}>
+            <Text style={styles.nightBannerText}>
+              {bn
+                ? 'নাইট মোড সক্রিয়: অন্ধকার গলি ও ফুটব্রিজ সতর্কতা অগ্রাধিকার পাচ্ছে।'
+                : 'Night mode active: Unlit alley & footbridge alerts prioritized.'}
+            </Text>
+          </View>
+        )}
+
+        {/* Full-Screen Scrollable Alerts List */}
+        <FlatList
+          data={visibleHazards}
+          keyExtractor={(item) => item.id}
+          style={styles.list}
+          contentContainerStyle={styles.listContent}
+          showsVerticalScrollIndicator={false}
+          ListEmptyComponent={
+            <View style={styles.emptyWrap}>
+              <AppIcon
+                name="shield-checkmark-outline"
+                size={46}
+                color={theme.textSecondary}
+              />
+              <Text style={[styles.emptyTitle, { color: theme.text }]}>
+                {bn ? 'কোনো সক্রিয় সতর্কতা নেই' : 'No Nearby Alerts'}
+              </Text>
+              <Text style={[styles.emptySub, { color: theme.textSecondary }]}>
+                {bn
+                  ? 'এই ক্যাটাগরিতে এখনো কোনো ঝুঁকি রিপোর্ট হয়নি।'
+                  : 'No active hazards reported for this filter.'}
+              </Text>
+            </View>
+          }
+          renderItem={({ item }) => {
+            const meta =
+              CATEGORY_META[item.category] || CATEGORY_META.pothole_manhole;
+            const accent = isDark ? meta.color : meta.lightColor;
+            const risk = getRiskPill(item.severity);
+            const status = getStatusBadge(item);
+            const isNightPriority =
+              isDark &&
+              (item.category === 'unlit_alley' ||
+                item.category === 'unsafe_footbridge');
+
+            const distMeters = userLocation
+              ? calcDistanceMeters(
+                  userLocation.latitude,
+                  userLocation.longitude,
+                  item.latitude,
+                  item.longitude,
+                )
+              : null;
+            const distText =
+              distMeters !== null
+                ? distMeters < 1000
+                  ? `${distMeters} m away`
+                  : `${(distMeters / 1000).toFixed(1)} km away`
+                : 'Dhaka';
+            const cleanedPlace = (item.landmark_context || '')
+              .replace(/\[Ambient Light:[^\]]*\]/gi, '')
+              .trim();
+            const locationLine = `${cleanedPlace || 'Dhaka'}, Dhaka · ${distText} · ${formatTimeAgo(item.created_at, bn)}`;
+            const confCount = item.confirmations ?? 0;
+
+            return (
+              <TouchableOpacity
+                style={[
+                  styles.alertCard,
+                  {
+                    backgroundColor: theme.surface,
+                    borderColor: theme.border,
+                  },
+                ]}
+                onPress={() => {
+                  onSelectHazard(item);
+                  onClose();
+                }}
+                activeOpacity={0.85}
+              >
+                <View style={styles.cardTopRow}>
+                  <Text
+                    style={[styles.cardCategoryText, { color: accent }]}
+                    numberOfLines={1}
+                  >
+                    {bn ? meta.nameBn : meta.name}
+                    {isNightPriority
+                      ? bn
+                        ? ' · রাতের অগ্রাধিকার'
+                        : ' · Night Priority'
+                      : ''}
+                  </Text>
+                  <View
+                    style={[
+                      styles.riskPill,
+                      {
+                        backgroundColor: risk.bg,
+                        borderColor: risk.border,
+                      },
+                    ]}
+                  >
+                    <Text style={[styles.riskPillText, { color: risk.text }]}>
+                      {risk.label}
+                    </Text>
+                  </View>
+                </View>
+
+                <Text
+                  style={[styles.cardTitle, { color: theme.text }]}
+                  numberOfLines={2}
+                >
+                  {bn ? meta.defaultTitleBn : meta.defaultTitle}
+                </Text>
+
+                <Text
+                  style={[styles.cardMeta, { color: theme.textSecondary }]}
+                  numberOfLines={1}
+                >
+                  {locationLine}
+                </Text>
+
+                <View style={styles.cardFooterRow}>
+                  <View
+                    style={[
+                      styles.statusPill,
+                      {
+                        backgroundColor: status.bg,
+                        borderColor: status.border,
+                      },
+                    ]}
+                  >
+                    <AppIcon name={status.icon} size={12} color={status.text} />
+                    <Text
+                      style={[styles.statusPillText, { color: status.text }]}
+                    >
+                      {status.label}
+                    </Text>
+                  </View>
+                  <Text
+                    style={[
+                      styles.confirmationsText,
+                      { color: theme.textSecondary },
+                    ]}
+                  >
+                    {confCount}{' '}
+                    {bn ? 'নিশ্চিতকরণ' : confCount === 1 ? 'confirmation' : 'confirmations'}
+                  </Text>
+                </View>
+              </TouchableOpacity>
+            );
+          }}
+        />
+
+        {/* Bottom 3-Tab Navigation Bar matching Figma SS4 */}
         <View
           style={[
-            styles.sheetContainer,
+            styles.bottomNav,
             {
-              backgroundColor: theme.sheetBg,
-              borderColor: theme.sheetBorder,
+              backgroundColor: theme.navBg,
+              borderTopColor: theme.border,
             },
           ]}
         >
-          <View
-            style={[styles.dragHandle, { backgroundColor: theme.dragHandle }]}
-          />
-
-          <View style={[styles.header, { borderBottomColor: theme.border }]}>
-            <View style={styles.titleGroup}>
-              <Text style={[styles.title, { color: theme.textPrimary }]}>
-                {copy.title}
-              </Text>
-              <View
-                style={[
-                  styles.countBadge,
-                  { backgroundColor: theme.countBadgeBg },
-                ]}
-              >
-                <Text
-                  style={[
-                    styles.countBadgeText,
-                    { color: theme.countBadgeText },
-                  ]}
-                >
-                  {sortedHazards.length}
-                </Text>
-              </View>
-            </View>
-
-            <TouchableOpacity
-              onPress={onClose}
-              style={[
-                styles.closeButton,
-                {
-                  backgroundColor: theme.closeBtnBg,
-                  borderColor: theme.closeBtnBorder,
-                },
-              ]}
-              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-              accessibilityLabel="Close alerts modal"
-            >
-              <Text style={[styles.closeButtonText, { color: theme.closeBtnText }]}>
-                ✕
-              </Text>
-            </TouchableOpacity>
-          </View>
-
-          {/* Category Filter Chips + Night Priority Banner (Figma Nearby Alerts) */}
-          <View style={{ height: 48, flexShrink: 0, justifyContent: 'center' }}>
-            <ScrollView
-              horizontal
-              showsHorizontalScrollIndicator={false}
-              contentContainerStyle={{
-                paddingHorizontal: 16,
-                alignItems: 'center',
-                gap: 8,
-              }}
-            >
-              {(
-                [
-                  'all',
-                  'extortion_spot',
-                  'unlit_alley',
-                  'waterlogging',
-                  'pothole_manhole',
-                  'unsafe_footbridge',
-                ] as const
-              ).map((cat) => {
-                const active = selectedCat === cat;
-                const label =
-                  cat === 'all'
-                    ? language === 'bn'
-                      ? 'সব'
-                      : 'All'
-                    : language === 'bn'
-                      ? CATEGORY_META[cat].nameBn
-                      : CATEGORY_META[cat].name;
-                return (
-                  <TouchableOpacity
-                    key={cat}
-                    onPress={() => setSelectedCat(cat)}
-                    style={{
-                      height: 32,
-                      paddingHorizontal: 12,
-                      borderRadius: 999,
-                      borderWidth: 1,
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      borderColor: active ? '#3B82F6' : theme.cardBorder,
-                      backgroundColor: active
-                        ? 'rgba(59, 130, 246, 0.2)'
-                        : theme.cardBg,
-                    }}
-                  >
-                    <Text
-                      style={{
-                        fontSize: 12,
-                        fontWeight: active ? '700' : '600',
-                        color: active ? '#93C5FD' : theme.textSecondary,
-                      }}
-                    >
-                      {label}
-                    </Text>
-                  </TouchableOpacity>
-                );
-              })}
-            </ScrollView>
-          </View>
-
-          {isDark && (
-            <View
-              style={{
-                marginHorizontal: 16,
-                marginBottom: 6,
-                paddingHorizontal: 10,
-                paddingVertical: 6,
-                borderRadius: 10,
-                backgroundColor: 'rgba(168, 85, 247, 0.16)',
-                borderWidth: 1,
-                borderColor: 'rgba(168, 85, 247, 0.35)',
-              }}
-            >
-              <Text style={{ color: '#E9D5FF', fontSize: 11, fontWeight: '600' }}>
-                {language === 'bn'
-                  ? '🌙 নাইট মোড সক্রিয়: অন্ধকার গলি ও ফুটব্রিজ সতর্কতা অগ্রাধিকার পাচ্ছে।'
-                  : '🌙 Night mode active: Unlit alley & footbridge alerts prioritized.'}
-              </Text>
-            </View>
-          )}
-
-          <FlatList
-            data={visibleHazards}
-            keyExtractor={(item) => item.id}
-            contentContainerStyle={styles.listContent}
-            showsVerticalScrollIndicator={false}
-            ListEmptyComponent={
-              <View style={styles.emptyContainer}>
-                <AppIcon
-                  name="shield-checkmark-outline"
-                  size={48}
-                  color={theme.emptyIconColor}
+          <TouchableOpacity
+            style={styles.navItem}
+            onPress={onClose}
+            activeOpacity={0.8}
+          >
+            <View style={styles.navIconPill}>
+              <Svg width={20} height={20} viewBox="0 0 24 24" fill="none">
+                <Path
+                  d="M9 4 3 6.8v13.2L9 17.2l6 2.8 6-2.8V4l-6 2.8L9 4Z"
+                  stroke={theme.textSecondary}
+                  strokeWidth={1.8}
+                  strokeLinejoin="round"
                 />
-                <Text
-                  style={[styles.emptyTitle, { color: theme.textPrimary }]}
-                >
-                  {copy.emptyTitle}
-                </Text>
-                <Text
-                  style={[
-                    styles.emptySubtitle,
-                    { color: theme.textSecondary },
-                  ]}
-                >
-                  {copy.emptySubtitle}
-                </Text>
-              </View>
-            }
-            renderItem={({ item }) => {
-              const meta =
-                CATEGORY_META[item.category] || CATEGORY_META.pothole_manhole;
-              const categoryColor = isDark ? meta.color : meta.lightColor;
-              const categorySurface = isDark
-                ? meta.surface
-                : meta.lightSurface;
-              const sevStyle = getSeverityStyle(item.severity);
-              const confirmationLabel = getConfirmationString(item);
-              const categoryName =
-                language === 'bn' ? meta.nameBn : meta.name;
-              const displayTitle =
-                item.landmark_context?.trim() || categoryName;
+                <Path
+                  d="M9 4v13.2M15 6.8V20"
+                  stroke={theme.textSecondary}
+                  strokeWidth={1.8}
+                />
+              </Svg>
+            </View>
+          </TouchableOpacity>
 
-              return (
-                <View
-                  style={[
-                    styles.alertCard,
-                    {
-                      backgroundColor: theme.cardBg,
-                      borderColor: theme.cardBorder,
-                    },
-                  ]}
-                >
-                  {/* Card Top: Colored Category Badge + Status Badges */}
-                  <View style={styles.cardHeaderRow}>
-                    <View
-                      style={[
-                        styles.categoryBadge,
-                        {
-                          backgroundColor: categorySurface,
-                          borderColor: categoryColor,
-                        },
-                      ]}
-                    >
-                      <Text style={styles.categoryIcon}>{meta.icon}</Text>
-                      <Text
-                        style={[
-                          styles.categoryBadgeText,
-                          { color: categoryColor },
-                        ]}
-                        numberOfLines={1}
-                      >
-                        {categoryName}
-                      </Text>
-                    </View>
+          <View style={styles.navItem}>
+            <View
+              style={[
+                styles.navIconPill,
+                { backgroundColor: theme.primarySurface },
+              ]}
+            >
+              <Svg width={20} height={20} viewBox="0 0 24 24" fill="none">
+                <Path
+                  d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"
+                  stroke={theme.primary}
+                  strokeWidth={1.8}
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+                <Path
+                  d="M13.7 21a2 2 0 0 1-3.4 0"
+                  stroke={theme.primary}
+                  strokeWidth={1.8}
+                  strokeLinecap="round"
+                />
+              </Svg>
+            </View>
+          </View>
 
-                    <View style={styles.rightBadgesRow}>
-                      {item.status === 'crowd_verified' && (
-                        <View
-                          style={[
-                            styles.statusPill,
-                            {
-                              backgroundColor: theme.verifiedBg,
-                              borderColor: theme.verifiedBorder,
-                            },
-                          ]}
-                        >
-                          <AppIcon
-                            name="checkmark-circle"
-                            size={12}
-                            color={theme.verifiedText}
-                          />
-                          <Text
-                            style={[
-                              styles.statusPillText,
-                              { color: theme.verifiedText },
-                            ]}
-                          >
-                            {copy.verifiedBadge}
-                          </Text>
-                        </View>
-                      )}
-
-                      <View
-                        style={[
-                          styles.statusPill,
-                          {
-                            backgroundColor: sevStyle.bg,
-                            borderColor: sevStyle.border,
-                          },
-                        ]}
-                      >
-                        <Text
-                          style={[
-                            styles.statusPillText,
-                            { color: sevStyle.text },
-                          ]}
-                        >
-                          {sevStyle.label}
-                        </Text>
-                      </View>
-                    </View>
-                  </View>
-
-                  {/* Hazard Title */}
-                  <Text
-                    style={[styles.hazardTitle, { color: theme.textPrimary }]}
-                    numberOfLines={2}
-                  >
-                    {displayTitle}
-                  </Text>
-
-                  {/* Subtag if present */}
-                  {item.sub_tag ? (
-                    <View style={styles.subtagBadge}>
-                      <Text style={styles.subtagText}>{item.sub_tag}</Text>
-                    </View>
-                  ) : null}
-
-                  {/* Thumbnail Image Preview if present */}
-                  {Boolean(item.image_url || (item as any).imageUrl || (item as any).imageUri) && (
-                    <View
-                      style={[
-                        styles.imagePreviewContainer,
-                        {
-                          backgroundColor: isDark ? '#0F172A' : '#E2E8F0',
-                          borderColor: theme.cardBorder,
-                        },
-                      ]}
-                    >
-                      <Image
-                        source={{
-                          uri: (item.image_url ||
-                            (item as any).imageUrl ||
-                            (item as any).imageUri) as string,
-                        }}
-                        style={styles.hazardThumbnail}
-                        resizeMode="cover"
-                      />
-                      <View style={styles.imageOverlayBadge}>
-                        <AppIcon name="camera" size={11} color="#FFFFFF" />
-                        <Text style={styles.imageOverlayText}>
-                          {language === 'bn' ? 'ছবির প্রমাণ' : 'Photo Evidence'}
-                        </Text>
-                      </View>
-                    </View>
-                  )}
-
-                  {/* Details / Confirmation / Coords Row */}
-                  <View style={styles.metaRow}>
-                    <View style={styles.metaItem}>
-                      <AppIcon
-                        name="people-outline"
-                        size={13}
-                        color={theme.textSecondary}
-                      />
-                      <Text
-                        style={[
-                          styles.metaText,
-                          { color: theme.textSecondary },
-                        ]}
-                      >
-                        {confirmationLabel}
-                      </Text>
-                    </View>
-
-                    <Text
-                      style={[
-                        styles.metaDivider,
-                        { color: theme.textSecondary },
-                      ]}
-                    >
-                      •
-                    </Text>
-
-                    <View style={styles.metaItem}>
-                      <AppIcon
-                        name="compass-outline"
-                        size={13}
-                        color={theme.textSecondary}
-                      />
-                      <Text
-                        style={[
-                          styles.metaText,
-                          { color: theme.textSecondary },
-                        ]}
-                      >
-                        {item.latitude.toFixed(4)}, {item.longitude.toFixed(4)}
-                      </Text>
-                    </View>
-                  </View>
-
-                  {/* Action: Locate on Map */}
-                  <TouchableOpacity
-                    style={[
-                      styles.locateButton,
-                      {
-                        backgroundColor: theme.locateBtnBg,
-                        borderColor: theme.locateBtnBorder,
-                      },
-                    ]}
-                    onPress={() => handleLocate(item)}
-                    activeOpacity={0.85}
-                  >
-                    <AppIcon
-                      name="location-sharp"
-                      size={15}
-                      color={theme.locateBtnText}
-                    />
-                    <Text
-                      style={[
-                        styles.locateButtonText,
-                        { color: theme.locateBtnText },
-                      ]}
-                    >
-                      {copy.locateOnMap}
-                    </Text>
-                  </TouchableOpacity>
-                </View>
-              );
+          <TouchableOpacity
+            style={styles.navItem}
+            onPress={() => {
+              onClose();
+              onOpenReport?.();
             }}
-          />
+            activeOpacity={0.8}
+          >
+            <View style={styles.navIconPill}>
+              <Svg width={22} height={22} viewBox="0 0 24 24" fill="none">
+                <Path
+                  d="M12 5v14M5 12h14"
+                  stroke={theme.textSecondary}
+                  strokeWidth={2}
+                  strokeLinecap="round"
+                />
+              </Svg>
+            </View>
+          </TouchableOpacity>
         </View>
       </View>
     </Modal>
@@ -661,231 +652,164 @@ export const AlertsModal: React.FC<AlertsModalProps> = ({
 };
 
 const styles = StyleSheet.create({
-  backdrop: {
-    flex: 1,
-    justifyContent: 'flex-end',
-  },
-  backdropDismiss: {
+  screen: {
     flex: 1,
   },
-  sheetContainer: {
-    borderTopLeftRadius: 24,
-    borderTopRightRadius: 24,
-    borderTopWidth: 1.5,
-    borderLeftWidth: 1,
-    borderRightWidth: 1,
-    maxHeight: '85%',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: -8 },
-    shadowOpacity: 0.35,
-    shadowRadius: 18,
-    elevation: 24,
-    paddingBottom: 24,
+  topBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 14,
+    paddingHorizontal: 16,
+    paddingBottom: 14,
   },
-  dragHandle: {
+  backBtn: {
     width: 38,
-    height: 4,
-    borderRadius: 2,
-    alignSelf: 'center',
-    marginTop: 10,
-    marginBottom: 8,
-  },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 18,
-    paddingVertical: 12,
-    borderBottomWidth: 1,
-  },
-  titleGroup: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  title: {
-    fontSize: 18,
-    fontWeight: '700',
-    lineHeight: 24,
-    letterSpacing: -0.2,
-  },
-  countBadge: {
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    borderRadius: 12,
-  },
-  countBadgeText: {
-    fontSize: 12,
-    fontWeight: '700',
-  },
-  closeButton: {
-    width: 32,
-    height: 32,
-    borderRadius: 9,
+    height: 38,
+    borderRadius: 19,
     borderWidth: 1,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  closeButtonText: {
-    fontSize: 14,
+  topTitle: {
+    fontSize: 20,
     fontWeight: '700',
-    lineHeight: 18,
+    letterSpacing: -0.2,
+  },
+  filterRowWrap: {
+    height: 46,
+    justifyContent: 'center',
+  },
+  filterRowContent: {
+    paddingHorizontal: 16,
+    alignItems: 'center',
+    gap: 8,
+  },
+  catPill: {
+    height: 36,
+    paddingHorizontal: 13,
+    borderRadius: 999,
+    borderWidth: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 7,
+  },
+  catPillText: {
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  nightBanner: {
+    marginHorizontal: 16,
+    marginTop: 10,
+    marginBottom: 8,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: 12,
+    backgroundColor: 'rgba(139, 92, 246, 0.16)',
+    borderWidth: 1,
+    borderColor: 'rgba(167, 139, 250, 0.45)',
+  },
+  nightBannerText: {
+    color: '#EDE9FE',
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  list: {
+    flex: 1,
   },
   listContent: {
     paddingHorizontal: 16,
-    paddingTop: 14,
-    paddingBottom: 20,
+    paddingTop: 6,
+    paddingBottom: 24,
     gap: 12,
-  },
-  emptyContainer: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 44,
-    paddingHorizontal: 20,
-    gap: 8,
-  },
-  emptyTitle: {
-    fontSize: 16,
-    fontWeight: '700',
-    marginTop: 6,
-  },
-  emptySubtitle: {
-    fontSize: 13,
-    textAlign: 'center',
-    lineHeight: 18,
   },
   alertCard: {
     borderRadius: 16,
-    borderWidth: 1.5,
-    padding: 14,
-    gap: 10,
-    shadowColor: '#0F172A',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.08,
-    shadowRadius: 6,
-    elevation: 2,
+    borderWidth: 1,
+    padding: 16,
+    gap: 8,
   },
-  cardHeaderRow: {
+  cardTopRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    flexWrap: 'wrap',
-    gap: 6,
+    gap: 8,
   },
-  categoryBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    borderWidth: 1,
-    borderRadius: 8,
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    gap: 5,
-  },
-  categoryIcon: {
+  cardCategoryText: {
     fontSize: 13,
+    fontWeight: '600',
+    flex: 1,
   },
-  categoryBadgeText: {
-    fontSize: 12,
+  riskPill: {
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 8,
+    borderWidth: 1,
+  },
+  riskPillText: {
+    fontSize: 11,
     fontWeight: '700',
   },
-  rightBadgesRow: {
+  cardTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    lineHeight: 22,
+  },
+  cardMeta: {
+    fontSize: 12.5,
+  },
+  cardFooterRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
+    gap: 10,
+    marginTop: 4,
   },
   statusPill: {
     flexDirection: 'row',
     alignItems: 'center',
+    gap: 5,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 8,
     borderWidth: 1,
-    borderRadius: 7,
-    paddingHorizontal: 7,
-    paddingVertical: 3,
-    gap: 4,
   },
   statusPillText: {
-    fontSize: 11,
-    fontWeight: '700',
-  },
-  hazardTitle: {
-    fontSize: 15,
-    fontWeight: '700',
-    lineHeight: 20,
-  },
-  subtagBadge: {
-    alignSelf: 'flex-start',
-    backgroundColor: 'rgba(251, 146, 60, 0.16)',
-    borderWidth: 1,
-    borderColor: 'rgba(251, 146, 60, 0.35)',
-    borderRadius: 6,
-    paddingHorizontal: 7,
-    paddingVertical: 2,
-  },
-  subtagText: {
-    color: '#FB923C',
-    fontSize: 11,
+    fontSize: 11.5,
     fontWeight: '600',
   },
-  imagePreviewContainer: {
-    height: 150,
-    borderRadius: 12,
-    borderWidth: 1,
-    overflow: 'hidden',
-    position: 'relative',
-    marginVertical: 4,
+  confirmationsText: {
+    fontSize: 12.5,
   },
-  hazardThumbnail: {
-    width: '100%',
-    height: '100%',
-  },
-  imageOverlayBadge: {
-    position: 'absolute',
-    bottom: 8,
-    left: 8,
-    backgroundColor: 'rgba(15, 23, 42, 0.78)',
-    borderRadius: 6,
-    paddingHorizontal: 7,
-    paddingVertical: 3,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-  },
-  imageOverlayText: {
-    color: '#F8FAFC',
-    fontSize: 10.5,
-    fontWeight: '600',
-  },
-  metaRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    flexWrap: 'wrap',
-    gap: 6,
-  },
-  metaItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-  },
-  metaText: {
-    fontSize: 12,
-    fontWeight: '500',
-  },
-  metaDivider: {
-    fontSize: 12,
-  },
-  locateButton: {
-    flexDirection: 'row',
+  emptyWrap: {
     alignItems: 'center',
     justifyContent: 'center',
-    height: 38,
-    borderRadius: 10,
-    borderWidth: 1,
-    gap: 6,
-    marginTop: 2,
+    paddingVertical: 70,
+    gap: 10,
   },
-  locateButtonText: {
-    fontSize: 13,
+  emptyTitle: {
+    fontSize: 16,
     fontWeight: '700',
-    letterSpacing: 0.1,
+  },
+  emptySub: {
+    fontSize: 13,
+    textAlign: 'center',
+  },
+  bottomNav: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-around',
+    borderTopWidth: 1,
+    paddingVertical: 10,
+    paddingBottom: Platform.OS === 'ios' ? 24 : 12,
+  },
+  navItem: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    minWidth: 68,
+  },
+  navIconPill: {
+    paddingHorizontal: 18,
+    paddingVertical: 7,
+    borderRadius: 16,
   },
 });
 

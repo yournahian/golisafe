@@ -230,7 +230,10 @@ export default function FullReportScreen({
 
   const [category, setCategory] = useState<HazardCategory>('pothole_manhole');
   const [severity, setSeverity] = useState<HazardSeverity>('Medium');
-  const [subTag, setSubTag] = useState<string | undefined>(undefined);
+  const [subTag, setSubTag] = useState<string | undefined>('Open manhole');
+  const [description, setDescription] = useState<string>('');
+  const [waterDepth, setWaterDepth] = useState<'Ankle-deep' | 'Knee-deep' | 'Impassable'>('Knee-deep');
+  const [surfaceCheck, setSurfaceCheck] = useState<string>('Open manhole verified');
   const [reportMode, setReportMode] = useState<'manual' | 'voice'>('manual');
   const [voiceLang, setVoiceLang] = useState<'Bangla' | 'Banglish' | 'English'>(
     'Bangla',
@@ -511,6 +514,9 @@ export default function FullReportScreen({
         setAiResult(res);
         setCategory(res.category);
         setSeverity(res.severity);
+        if (res.transcript) {
+          setDescription(res.transcript);
+        }
         if (res.landmark_context) {
           setLocationText(res.landmark_context);
         }
@@ -547,18 +553,23 @@ export default function FullReportScreen({
         if (remote) uploadedUrl = remote;
       }
 
-      let finalSubTag =
-        category === 'unsafe_footbridge' ? subTag : undefined;
-      if (category === 'unlit_alley' && sensorAvailable && luxReading !== null) {
+      let finalSubTag = subTag;
+      if (category === 'waterlogging') {
+        finalSubTag = waterDepth;
+      } else if (category === 'unlit_alley' && sensorAvailable && luxReading !== null) {
         finalSubTag = `${luxReading} lux (${luxReading < 15 ? 'Dark Alley Confirmed' : 'Well-Lit'})`;
       }
+
+      const finalContext = description.trim()
+        ? `${trimmedLoc} — ${description.trim()}`
+        : trimmedLoc;
 
       await onSubmitHazard({
         category,
         severity,
         latitude,
         longitude,
-        landmark_context: trimmedLoc,
+        landmark_context: finalContext,
         sub_tag: finalSubTag,
         imageUri: uploadedUrl,
         image_url: uploadedUrl,
@@ -862,99 +873,213 @@ export default function FullReportScreen({
           </View>
 
           {reportMode === 'manual' ? (
-            <View
-              style={[
-                styles.detailsCard,
-                { backgroundColor: theme.surface, borderColor: theme.border },
-              ]}
-            >
-              <Text
-                style={[styles.subSectionLabel, { color: theme.textSecondary }]}
+            <View style={{ gap: 14 }}>
+              {/* AI Draft Assist Card (Figma SS2) */}
+              <View
+                style={[
+                  styles.detailsCard,
+                  {
+                    backgroundColor: theme.surface,
+                    borderColor: theme.border,
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    gap: 12,
+                  },
+                ]}
               >
-                {language === 'bn' ? 'ঝুঁকির মাত্রা' : 'SEVERITY LEVEL'}
-              </Text>
-              <View style={styles.severityRow}>
-                {SEVERITIES.map((sev) => {
-                  const active = severity === sev;
-                  const sevColor =
-                    sev === 'Critical'
-                      ? '#EF4444'
-                      : sev === 'Medium'
-                        ? '#F59E0B'
-                        : '#10B981';
-                  return (
-                    <TouchableOpacity
-                      key={sev}
-                      style={[
-                        styles.severityChip,
-                        {
-                          backgroundColor: active
-                            ? `${sevColor}26`
-                            : theme.surfaceElevated,
-                          borderColor: active ? sevColor : theme.borderStrong,
-                        },
-                      ]}
-                      onPress={() => setSeverity(sev)}
-                      activeOpacity={0.8}
-                    >
-                      <Text
-                        style={[
-                          styles.severityChipText,
-                          { color: active ? sevColor : theme.text },
-                        ]}
-                      >
-                        {sev}
-                      </Text>
-                    </TouchableOpacity>
-                  );
-                })}
+                <View style={{ flex: 1 }}>
+                  <Text style={{ color: theme.text, fontSize: 13.5, fontWeight: '700' }}>
+                    {language === 'bn' ? 'AI ড্রাফট অ্যাসিস্ট' : 'AI Draft Assist'}
+                  </Text>
+                  <Text style={{ color: theme.textSecondary, fontSize: 11.5, marginTop: 2 }}>
+                    {language === 'bn'
+                      ? 'ট্রান্সক্রিপ্ট, ক্যাটাগরি ও লোকেশন অটো-ফিল করুন।'
+                      : 'Auto-fill transcript, category and location.'}
+                  </Text>
+                </View>
+                <TouchableOpacity
+                  style={{
+                    backgroundColor: '#3B82F6',
+                    paddingHorizontal: 14,
+                    paddingVertical: 9,
+                    borderRadius: 10,
+                  }}
+                  onPress={async () => {
+                    if (!description.trim() && !locationText.trim()) return;
+                    setIsClassifying(true);
+                    try {
+                      const res = await classifyWithAI({
+                        text: `${description} ${locationText}`.trim(),
+                        currentCategory: category,
+                      });
+                      if (res) {
+                        setAiResult(res);
+                        setCategory(res.category);
+                        setSeverity(res.severity);
+                      }
+                    } finally {
+                      setIsClassifying(false);
+                    }
+                  }}
+                  disabled={isClassifying}
+                  activeOpacity={0.85}
+                >
+                  {isClassifying ? (
+                    <ActivityIndicator size="small" color="#FFFFFF" />
+                  ) : (
+                    <Text style={{ color: '#FFFFFF', fontSize: 12.5, fontWeight: '700' }}>
+                      {language === 'bn' ? 'রিভিউ করুন' : 'Review report'}
+                    </Text>
+                  )}
+                </TouchableOpacity>
               </View>
 
-              {category === 'unsafe_footbridge' && (
-                <View style={styles.subtagSection}>
-                  <Text
-                    style={[
-                      styles.subSectionLabel,
-                      { color: theme.textSecondary },
-                    ]}
-                  >
-                    FOOTBRIDGE RISK TAG
-                  </Text>
-                  <View style={styles.presetWrap}>
-                    {FOOTBRIDGE_SUBTAGS.map((tag) => {
-                      const active = subTag === tag;
-                      return (
-                        <TouchableOpacity
-                          key={tag}
+              {/* Category-specific hazard type pills (Figma SS2: Road hazard type) */}
+              <View style={{ gap: 8 }}>
+                <Text style={{ color: theme.text, fontSize: 13.5, fontWeight: '700' }}>
+                  {category === 'pothole_manhole'
+                    ? language === 'bn'
+                      ? 'সড়ক ঝুঁকির ধরন'
+                      : 'Road hazard type'
+                    : category === 'unsafe_footbridge'
+                      ? 'Footbridge risk type'
+                      : category === 'waterlogging'
+                        ? 'Flood level'
+                        : category === 'unlit_alley'
+                          ? 'Lighting issue'
+                          : 'Extortion type'}
+                </Text>
+                <View style={styles.severityRow}>
+                  {(category === 'pothole_manhole'
+                    ? ['Pothole', 'Open manhole', 'Road damage']
+                    : category === 'unsafe_footbridge'
+                      ? FOOTBRIDGE_SUBTAGS
+                      : category === 'waterlogging'
+                        ? ['Ankle-deep', 'Knee-deep', 'Impassable']
+                        : category === 'unlit_alley'
+                          ? ['No lights', 'Broken lamp', 'Pitch dark']
+                          : ['Illegal toll', 'Snatcher spot', 'Night threat']
+                  ).map((opt) => {
+                    const active = subTag === opt;
+                    return (
+                      <TouchableOpacity
+                        key={opt}
+                        style={[
+                          styles.severityChip,
+                          {
+                            backgroundColor: active
+                              ? 'rgba(239, 68, 68, 0.16)'
+                              : theme.surfaceElevated,
+                            borderColor: active ? '#EF4444' : theme.borderStrong,
+                          },
+                        ]}
+                        onPress={() => setSubTag(opt)}
+                        activeOpacity={0.8}
+                      >
+                        <Text
                           style={[
-                            styles.presetChip,
-                            {
-                              backgroundColor: active
-                                ? 'rgba(251, 146, 60, 0.2)'
-                                : theme.surfaceElevated,
-                              borderColor: active
-                                ? '#FB923C'
-                                : theme.borderStrong,
-                            },
+                            styles.severityChipText,
+                            { color: active ? '#FCA5A5' : theme.text },
                           ]}
-                          onPress={() =>
-                            setSubTag((p) => (p === tag ? undefined : tag))
-                          }
+                          numberOfLines={1}
                         >
-                          <Text
-                            style={[
-                              styles.presetChipText,
-                              { color: active ? '#FB923C' : theme.text },
-                            ]}
-                          >
-                            {tag}
-                          </Text>
-                        </TouchableOpacity>
-                      );
-                    })}
-                  </View>
+                          {opt}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
                 </View>
-              )}
+              </View>
+
+              {/* Description * multi-line box (Figma SS2) */}
+              <View
+                style={[
+                  styles.inputBox,
+                  {
+                    backgroundColor: theme.searchBg,
+                    borderColor: theme.borderStrong,
+                    minHeight: 88,
+                  },
+                ]}
+              >
+                <Text style={[styles.inputLabel, { color: theme.textSecondary }]}>
+                  {language === 'bn' ? 'বিবরণ *' : 'Description *'}
+                </Text>
+                <TextInput
+                  style={[styles.textInput, { color: theme.text, minHeight: 54, textAlignVertical: 'top' }]}
+                  value={description}
+                  onChangeText={setDescription}
+                  multiline
+                  placeholder={
+                    language === 'bn'
+                      ? 'রাস্তার ঝুঁকিটি সংক্ষেপে বর্ণনা করুন'
+                      : 'Describe the road hazard'
+                  }
+                  placeholderTextColor={theme.searchPlaceholder}
+                />
+              </View>
+
+              {/* Amber Safety Callout (Figma SS2) */}
+              <View
+                style={{
+                  backgroundColor: 'rgba(245, 158, 11, 0.14)',
+                  borderColor: 'rgba(245, 158, 11, 0.35)',
+                  borderWidth: 1,
+                  borderRadius: 10,
+                  paddingHorizontal: 14,
+                  paddingVertical: 10,
+                }}
+              >
+                <Text style={{ color: '#FCD34D', fontSize: 12.5, fontWeight: '600' }}>
+                  {language === 'bn'
+                    ? 'খোলা গর্ত বা ঝুঁকিপূর্ণ স্থান থেকে নিরাপদ দূরত্ব বজায় রাখুন।'
+                    : 'Keep clear of open hazards.'}
+                </Text>
+              </View>
+
+              {/* Severity Level row */}
+              <View style={{ gap: 8 }}>
+                <Text style={[styles.subSectionLabel, { color: theme.textSecondary }]}>
+                  {language === 'bn' ? 'ঝুঁকির মাত্রা' : 'SEVERITY LEVEL'}
+                </Text>
+                <View style={styles.severityRow}>
+                  {SEVERITIES.map((sev) => {
+                    const active = severity === sev;
+                    const sevColor =
+                      sev === 'Critical'
+                        ? '#EF4444'
+                        : sev === 'Medium'
+                          ? '#F59E0B'
+                          : '#10B981';
+                    return (
+                      <TouchableOpacity
+                        key={sev}
+                        style={[
+                          styles.severityChip,
+                          {
+                            backgroundColor: active
+                              ? `${sevColor}26`
+                              : theme.surfaceElevated,
+                            borderColor: active ? sevColor : theme.borderStrong,
+                          },
+                        ]}
+                        onPress={() => setSeverity(sev)}
+                        activeOpacity={0.8}
+                      >
+                        <Text
+                          style={[
+                            styles.severityChipText,
+                            { color: active ? sevColor : theme.text },
+                          ]}
+                        >
+                          {sev}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+              </View>
 
               {category === 'unlit_alley' && (
                 <View
@@ -971,59 +1096,212 @@ export default function FullReportScreen({
                 >
                   <Text style={[styles.luxTitle, { color: theme.text }]}>
                     {sensorAvailable && luxReading !== null
-                      ? `💡 Ambient Light: ${luxReading} lux (${luxReading < 15 ? 'Dark Alley Confirmed' : 'Lit'})`
-                      : '💡 Street Illumination Check (Manual Fallback Active)'}
+                      ? `Ambient Light: ${luxReading} lux (${luxReading < 15 ? 'Dark Alley Confirmed' : 'Lit'})`
+                      : 'Street Illumination Check (Manual Fallback Active)'}
                   </Text>
                 </View>
               )}
 
-              {/* Photo Evidence Row */}
-              <View style={styles.photoRow}>
-                <TouchableOpacity
-                  style={[
-                    styles.photoBtn,
-                    {
-                      backgroundColor: theme.surfaceElevated,
-                      borderColor: theme.borderStrong,
-                    },
-                  ]}
-                  onPress={() => handlePickPhoto(true)}
-                >
-                  <Text style={[styles.photoBtnText, { color: theme.text }]}>
-                    📷 {language === 'bn' ? 'ছবি তুলুন' : 'Take Photo'}
-                  </Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={[
-                    styles.photoBtn,
-                    {
-                      backgroundColor: theme.surfaceElevated,
-                      borderColor: theme.borderStrong,
-                    },
-                  ]}
-                  onPress={() => handlePickPhoto(false)}
-                >
-                  <Text style={[styles.photoBtnText, { color: theme.text }]}>
-                    🖼️ {language === 'bn' ? 'গ্যালারি' : 'Gallery'}
-                  </Text>
-                </TouchableOpacity>
-              </View>
-
-              {imageUri && (
-                <View style={styles.previewWrap}>
+              {/* Add photo (optional) Card matching Figma SS2 */}
+              <View
+                style={[
+                  styles.detailsCard,
+                  {
+                    backgroundColor: theme.surface,
+                    borderColor: theme.border,
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    gap: 12,
+                  },
+                ]}
+              >
+                {imageUri ? (
                   <Image
                     source={{ uri: imageUri }}
-                    style={styles.previewImg}
+                    style={{ width: 64, height: 64, borderRadius: 10 }}
                     resizeMode="cover"
                   />
-                  <TouchableOpacity
-                    style={styles.removeImgBtn}
-                    onPress={() => setImageUri(null)}
+                ) : (
+                  <View
+                    style={{
+                      width: 64,
+                      height: 64,
+                      borderRadius: 10,
+                      backgroundColor: theme.surfaceElevated,
+                      borderWidth: 1,
+                      borderColor: theme.borderStrong,
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                    }}
                   >
-                    <Text style={styles.removeImgText}>✕</Text>
+                    <Text style={{ color: theme.textSecondary, fontSize: 11, fontWeight: '700' }}>
+                      PHOTO
+                    </Text>
+                  </View>
+                )}
+
+                <View style={{ flex: 1, gap: 2 }}>
+                  <Text style={{ color: '#60A5FA', fontSize: 13, fontWeight: '700' }}>
+                    {language === 'bn' ? 'ছবি যুক্ত করুন (ঐচ্ছিক)' : 'Add photo (optional)'}
+                  </Text>
+                  <Text style={{ color: theme.textSecondary, fontSize: 11.5 }}>
+                    {imageUri
+                      ? language === 'bn'
+                        ? 'ছবি সংযুক্ত হয়েছে'
+                        : 'Photo attached'
+                      : language === 'bn'
+                        ? 'ক্যামেরা বা গ্যালারি থেকে দিন'
+                        : 'Attach from camera or gallery'}
+                  </Text>
+                  <Text style={{ color: '#34D399', fontSize: 11, fontWeight: '600' }}>
+                    GPS tagged: {latitude.toFixed(4)}°N, {longitude.toFixed(4)}°E
+                  </Text>
+                </View>
+
+                <View style={{ gap: 6 }}>
+                  <TouchableOpacity
+                    style={{
+                      paddingHorizontal: 12,
+                      paddingVertical: 6,
+                      borderRadius: 8,
+                      backgroundColor: theme.surfaceElevated,
+                      borderWidth: 1,
+                      borderColor: theme.borderStrong,
+                      alignItems: 'center',
+                    }}
+                    onPress={() => handlePickPhoto(true)}
+                  >
+                    <Text style={{ color: theme.text, fontSize: 11.5, fontWeight: '600' }}>
+                      {imageUri ? 'Camera' : 'Camera'}
+                    </Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={{
+                      paddingHorizontal: 12,
+                      paddingVertical: 6,
+                      borderRadius: 8,
+                      backgroundColor: theme.surfaceElevated,
+                      borderWidth: 1,
+                      borderColor: theme.borderStrong,
+                      alignItems: 'center',
+                    }}
+                    onPress={() =>
+                      imageUri ? setImageUri(null) : handlePickPhoto(false)
+                    }
+                  >
+                    <Text style={{ color: theme.text, fontSize: 11.5, fontWeight: '600' }}>
+                      {imageUri ? 'Remove' : 'Gallery'}
+                    </Text>
                   </TouchableOpacity>
                 </View>
-              )}
+              </View>
+
+              {/* Photo classification Card (Figma SS2) */}
+              <View
+                style={[
+                  styles.detailsCard,
+                  {
+                    backgroundColor: theme.surface,
+                    borderColor: theme.border,
+                    gap: 10,
+                  },
+                ]}
+              >
+                <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <Text style={{ color: theme.text, fontSize: 13.5, fontWeight: '700' }}>
+                    {language === 'bn' ? 'ছবির শ্রেণিবিন্যাস' : 'Photo classification'}
+                  </Text>
+                  <View
+                    style={{
+                      backgroundColor: '#F8FAFC',
+                      paddingHorizontal: 10,
+                      paddingVertical: 3,
+                      borderRadius: 999,
+                    }}
+                  >
+                    <Text style={{ color: '#0F172A', fontSize: 11, fontWeight: '700' }}>
+                      Reviewable
+                    </Text>
+                  </View>
+                </View>
+
+                <Text style={{ color: theme.textSecondary, fontSize: 11.5 }}>
+                  Waterlogging depth:
+                </Text>
+                <View style={styles.presetWrap}>
+                  {(['Ankle-deep', 'Knee-deep', 'Impassable'] as const).map((d) => {
+                    const active = waterDepth === d;
+                    return (
+                      <TouchableOpacity
+                        key={d}
+                        onPress={() => setWaterDepth(d)}
+                        style={[
+                          styles.presetChip,
+                          {
+                            backgroundColor: active
+                              ? theme.primarySurface
+                              : theme.surfaceElevated,
+                            borderColor: active ? theme.primary : theme.borderStrong,
+                          },
+                        ]}
+                      >
+                        <Text
+                          style={[
+                            styles.presetChipText,
+                            { color: active ? theme.primaryText : theme.text },
+                          ]}
+                        >
+                          {d}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+
+                <Text style={{ color: theme.textSecondary, fontSize: 11.5, marginTop: 2 }}>
+                  Surface verification:
+                </Text>
+                <View style={styles.presetWrap}>
+                  {[
+                    'Open manhole verified',
+                    'Road crater / pothole verified',
+                    'Submerged hazard suspected',
+                    'No visible crater',
+                  ].map((s) => {
+                    const active = surfaceCheck === s;
+                    return (
+                      <TouchableOpacity
+                        key={s}
+                        onPress={() => setSurfaceCheck(s)}
+                        style={[
+                          styles.presetChip,
+                          {
+                            backgroundColor: active
+                              ? theme.primarySurface
+                              : theme.surfaceElevated,
+                            borderColor: active ? theme.primary : theme.borderStrong,
+                          },
+                        ]}
+                      >
+                        <Text
+                          style={[
+                            styles.presetChipText,
+                            { color: active ? theme.primaryText : theme.text },
+                          ]}
+                        >
+                          {s}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+              </View>
+
+              <Text style={{ color: theme.textSecondary, fontSize: 11.5, lineHeight: 16 }}>
+                {language === 'bn'
+                  ? 'বেনামী রিপোর্ট। শুধুমাত্র সময়, ক্যাটাগরি এবং কমিউনিটি কনফার্মেশন সংখ্যা প্রকাশ্যে দেখাবে।'
+                  : 'Anonymous report. Only the timestamp, category, and community confirmation count appear publicly.'}
+              </Text>
             </View>
           ) : (
             <View
