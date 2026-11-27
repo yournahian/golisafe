@@ -228,17 +228,33 @@ router.post('/classify', async (req: Request, res: Response) => {
     }
 
     const systemPrompt =
-      'You are an AI hazard classifier for GoliSafe civic safety in Dhaka, Bangladesh.\n' +
-      'Listen to the audio and/or inspect the image and text (in Bangla, Banglish, or English) and classify into JSON.\n' +
-      'Allowed category values: "pothole_manhole", "waterlogging", "unlit_alley", "unsafe_footbridge", "extortion_spot".\n' +
-      'Allowed severity values: "Low", "Medium", "Critical".\n' +
-      'If audio is provided, transcribe what the citizen actually said in the "transcript" field.\n' +
-      'If category is "waterlogging", set waterlogging_depth to "Ankle-deep", "Knee-deep", or "Impassable".\n' +
-      'Extract landmark_context if a Dhaka neighborhood or street is mentioned.\n' +
-      'Return ONLY a raw valid JSON object with keys: category, severity, transcript, landmark_context, waterlogging_depth, confidence, reasoning.';
+      'You are an expert AI civic-safety hazard classifier for GoliSafe in Dhaka, Bangladesh.\n' +
+      'You receive citizen voice audio (Bangla, Banglish, or English), a street photo, and/or text.\n\n' +
+      'STRICT CLASSIFICATION RULES (choose ONLY one of these 5 categories):\n' +
+      '1. "unlit_alley": Dark street, unlit lane/goli, broken or missing streetlights, pitch-black/dim nighttime road.\n' +
+      '   - Bangla/Banglish voice cues: অন্ধকার, অন্ধকার গলি, আলো নাই, বাতি নাই, লাইট নষ্ট, স্ট্রিট লাইট নাই, ondhokar, alo nai, batti nai, light noshto, dark alley, unlit.\n' +
+      '   - Photo rule: If the photo is dark/nighttime with dim or no street lighting and NO obvious deep standing floodwater, ALWAYS classify as "unlit_alley" (do NOT confuse dark asphalt or night shadows with waterlogging!).\n' +
+      '2. "waterlogging": Visible standing floodwater covering the road, submerged feet/wheels, drain overflow.\n' +
+      '   - Bangla/Banglish voice cues: পানি জমেছে, জলাবদ্ধতা, হাঁটু পানি, কোমর পানি, রাস্তা ডুবে গেছে, বৃষ্টির পানি, pani, jolaboddhota, hatu pani, komor pani, flood, waterlogging.\n' +
+      '   - Photo rule: Only choose "waterlogging" if actual water/puddles/flooding is clearly visible on the street.\n' +
+      '3. "pothole_manhole": Open manhole (missing lid), deep pothole, crater, broken/damaged road surface.\n' +
+      '   - Bangla/Banglish voice cues: গর্ত, ম্যানহোল, ঢাকনা নাই, খোলা ম্যানহোল, রাস্তা ভাঙা, gorto, manhole, dhakna nai, pothole, broken road.\n' +
+      '4. "unsafe_footbridge": Pedestrian footbridge/overbridge hazards — broken stairs/railing, hawkers blocking bridge, snatchers/addicts on footbridge.\n' +
+      '   - Bangla/Banglish voice cues: ফুটব্রিজ, ওভারব্রিজ, ব্রিজের সিঁড়ি, হকার, footbridge, overbridge, bridge stairs.\n' +
+      '5. "extortion_spot": Illegal toll/chanda collection, mastaan/goons/snatchers threatening drivers or pedestrians.\n' +
+      '   - Bangla/Banglish voice cues: চাঁদা, চাঁদাবাজি, মাস্তান, ছিনতাই, গুন্ডা, chanda, chandabaji, extortion, mastaan, snatcher, hijack.\n\n' +
+      'INSTRUCTIONS:\n' +
+      '- If audio is provided: FIRST listen carefully and transcribe the exact spoken Bangla/Banglish/English words into "transcript". Then classify strictly based on what the speaker actually said.\n' +
+      '- If an image is provided: First describe what you literally see (lighting level, road surface, water, bridge, etc.) in "reasoning", then pick the most accurate category.\n' +
+      '- Severity: "Critical" for immediate life/safety danger (open manhole, knee/waist-deep flood, extortion, pitch-black crime-prone alley, broken bridge), "Medium" for moderate hazard, "Low" for minor hazard.\n' +
+      '- If category is "waterlogging", set "waterlogging_depth" to "Ankle-deep", "Knee-deep", or "Impassable". Otherwise omit it.\n' +
+      '- Extract "landmark_context" only if a Dhaka area/road is clearly mentioned.\n' +
+      '- Return ONLY a valid JSON object with keys: transcript, reasoning, category, severity, landmark_context, waterlogging_depth, confidence.';
 
     parts.push({
-      text: `${systemPrompt}\nUser Context: "${combinedText || 'Analyze the provided audio/image accurately'}"`,
+      text: combinedText
+        ? `Additional user note: "${combinedText}". Analyze the attached audio/image/note carefully and return JSON.`
+        : 'Analyze the attached audio and/or image carefully following the system rules and return JSON.',
     });
 
     let response: any = null;
@@ -253,10 +269,13 @@ router.post('/classify', async (req: Request, res: Response) => {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          contents: [{ parts }],
+          system_instruction: {
+            parts: [{ text: systemPrompt }],
+          },
+          contents: [{ role: 'user', parts }],
           generationConfig: {
             response_mime_type: 'application/json',
-            temperature: 0.1,
+            temperature: 0.0,
           },
         }),
         signal: controller.signal,
