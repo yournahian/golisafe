@@ -4,12 +4,15 @@ import { HazardCategory, HazardSeverity } from './hazards';
 export interface ClassifyRequest {
   text?: string;
   audioBase64?: string;
+  audioMimeType?: string;
   imageBase64?: string;
+  currentCategory?: HazardCategory;
 }
 
 export interface ClassifyResponse {
   category: HazardCategory;
   severity: HazardSeverity;
+  transcript?: string;
   landmark_context?: string;
   waterlogging_depth?: 'Ankle-deep' | 'Knee-deep' | 'Impassable';
   confidence: number;
@@ -54,30 +57,35 @@ const DHAKA_LANDMARKS = [
  * Fast Bangla, Banglish, and English rule-based heuristic classifier.
  * Invoked as an immediate offline/timeout fallback per SRS NFR-19.
  */
-function heuristicClassify(text = ''): ClassifyResponse {
+function heuristicClassify(
+  text = '',
+  currentCategory?: HazardCategory
+): ClassifyResponse {
   const lower = text.toLowerCase();
 
-  let category: HazardCategory = 'pothole_manhole';
+  let category: HazardCategory = currentCategory || 'pothole_manhole';
   let severity: HazardSeverity = 'Medium';
   let waterlogging_depth: 'Ankle-deep' | 'Knee-deep' | 'Impassable' | undefined;
   let confidence = 0.85;
+  let matchedKeyword = false;
 
   // 1. Waterlogging
   if (
-    /pani|water|jola|jal|flood|waterlog|doba|brishti|drain overflow|khal|talap|noyordoma|kadamer|bheshe|waterlogging/.test(
+    /pani|water|jola|jal|flood|waterlog|doba|brishti|drain overflow|khal|talap|noyordoma|kadamer|bheshe|waterlogging|পানি|জলাবদ্ধতা|বৃষ্টি/.test(
       lower
     )
   ) {
     category = 'waterlogging';
     confidence = 0.92;
+    matchedKeyword = true;
 
-    if (/komor|waist|impassable|thoi thoi|bheshe|boat|duibe/.test(lower)) {
+    if (/komor|waist|impassable|thoi thoi|bheshe|boat|duibe|কোমর/.test(lower)) {
       waterlogging_depth = 'Impassable';
       severity = 'Critical';
-    } else if (/hathu|knee|dubi|gari|moddho/.test(lower)) {
+    } else if (/hathu|knee|dubi|gari|moddho|হাঁটু/.test(lower)) {
       waterlogging_depth = 'Knee-deep';
       severity = 'Critical';
-    } else if (/takhnu|ankle|tola|pata|choto/.test(lower)) {
+    } else if (/takhnu|ankle|tola|pata|choto|গোড়ালি/.test(lower)) {
       waterlogging_depth = 'Ankle-deep';
       severity = 'Low';
     } else {
@@ -87,25 +95,27 @@ function heuristicClassify(text = ''): ClassifyResponse {
   }
   // 2. Extortion Choke-point
   else if (
-    /chanda|extortion|toll|mastaan|threat|danger|chada|chokepoint|hijack|chintai|snatch|gunda|chandabaji|dakat/.test(
+    /chanda|extortion|toll|mastaan|threat|danger|chada|chokepoint|hijack|chintai|snatch|gunda|chandabaji|dakat|চাঁদা|মাস্তান|ছিনতাই/.test(
       lower
     )
   ) {
     category = 'extortion_spot';
     severity = 'Critical';
     confidence = 0.9;
+    matchedKeyword = true;
   }
   // 3. Unsafe Footbridge
   else if (
-    /footbridge|overbridge|bridge|shanko|stairs|railing|railings|step|shiri|pul/.test(
+    /footbridge|overbridge|bridge|shanko|stairs|railing|railings|step|shiri|pul|ফুটব্রিজ|ওভারব্রিজ|ব্রিজ/.test(
       lower
     )
   ) {
     category = 'unsafe_footbridge';
     confidence = 0.88;
-    if (/bhanga|broken|danger|hazard|lored|morichika|slub nai/.test(lower)) {
+    matchedKeyword = true;
+    if (/bhanga|broken|danger|hazard|lored|morichika|slub nai|ভাঙা/.test(lower)) {
       severity = 'Critical';
-    } else if (/slippery|pichil|wet/.test(lower)) {
+    } else if (/slippery|pichil|wet|পিচ্ছিল/.test(lower)) {
       severity = 'Low';
     } else {
       severity = 'Medium';
@@ -113,25 +123,34 @@ function heuristicClassify(text = ''): ClassifyResponse {
   }
   // 4. Unlit / Dark Alley
   else if (
-    /ondhokar|dark|unlit|batti nai|light nai|alley|goli|bati noshto|cherag|street light|andhar|alo nai/.test(
+    /ondhokar|dark|unlit|batti nai|light nai|alley|goli|bati noshto|cherag|street light|andhar|alo nai|অন্ধকার|বাতি|গলি|আলো/.test(
       lower
     )
   ) {
     category = 'unlit_alley';
     confidence = 0.89;
-    severity = /chintai|danger|bipod|ekebare/.test(lower) ? 'Critical' : 'Medium';
+    matchedKeyword = true;
+    severity = /chintai|danger|bipod|ekebare|ছিনতাই|বিপদ/.test(lower) ? 'Critical' : 'Medium';
   }
-  // 5. Pothole / Open Manhole
-  else {
+  // 5. Explicit Pothole / Open Manhole keywords
+  else if (
+    /pothole|manhole|gorto|khana|khanda|dhakna|hole|broken road|গর্ত|ম্যানহোল|ভাঙা রাস্তা/.test(
+      lower
+    )
+  ) {
     category = 'pothole_manhole';
-    confidence = 0.85;
+    confidence = 0.86;
+    matchedKeyword = true;
     if (
-      /open|dhakna nai|bipojjonok|manhole|danger|accident|mora|fatal/.test(lower)
+      /open|dhakna nai|bipojjonok|manhole|danger|accident|mora|fatal|খোলা/.test(lower)
     ) {
       severity = 'Critical';
     } else {
       severity = 'Medium';
     }
+  } else if (!currentCategory) {
+    category = 'pothole_manhole';
+    confidence = 0.5;
   }
 
   // Extract landmark if present
@@ -146,33 +165,38 @@ function heuristicClassify(text = ''): ClassifyResponse {
   return {
     category,
     severity,
+    transcript: text.trim() || undefined,
     landmark_context,
     waterlogging_depth,
-    confidence,
+    confidence: matchedKeyword ? confidence : 0.5,
     fallback: true,
-    reasoning: 'Classified using local Bangla/Banglish/English keyword heuristics',
+    reasoning: matchedKeyword
+      ? 'Classified using Bangla/Banglish/English keyword heuristics'
+      : 'No Gemini API key configured — preserved selected category',
   };
 }
 
 /**
  * POST /api/ai/classify
- * Accepts { text?: string, audioBase64?: string, imageBase64?: string }
- * Calls Gemini 2.5 Flash with strict 4.5s timeout; falls back to heuristic classifier on error/timeout.
+ * Accepts { text?: string, audioBase64?: string, audioMimeType?: string, imageBase64?: string, currentCategory?: HazardCategory }
+ * Calls Gemini 2.5 Flash; falls back to heuristic classifier on error/timeout.
  */
 router.post('/classify', async (req: Request, res: Response) => {
-  const { text, audioBase64, imageBase64 } = req.body as ClassifyRequest;
+  const { text, audioBase64, audioMimeType, imageBase64, currentCategory } =
+    req.body as ClassifyRequest;
 
   const combinedText = (text || '').trim();
   const apiKey = process.env.GEMINI_API_KEY;
 
   if (!apiKey) {
-    const heuristic = heuristicClassify(combinedText);
+    const heuristic = heuristicClassify(combinedText, currentCategory);
     return res.status(200).json(heuristic);
   }
 
-  // Strict 4.5s AbortController timeout per SRS NFR-19
+  const hasMedia = Boolean(audioBase64 || imageBase64);
+  const timeoutMs = hasMedia ? 9000 : 4500;
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 4500);
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
     const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`;
@@ -183,31 +207,36 @@ router.post('/classify', async (req: Request, res: Response) => {
       parts.push({
         inline_data: {
           mime_type: 'image/jpeg',
-          data: imageBase64.replace(/^data:image\/\w+;base64,/, ''),
+          data: imageBase64.replace(/^data:image\/[^;]+;base64,/, ''),
         },
       });
     }
 
     if (audioBase64) {
+      const resolvedMime =
+        audioMimeType && audioMimeType.startsWith('audio/')
+          ? audioMimeType
+          : 'audio/mp4';
       parts.push({
         inline_data: {
-          mime_type: 'audio/mp3',
-          data: audioBase64.replace(/^data:audio\/\w+;base64,/, ''),
+          mime_type: resolvedMime,
+          data: audioBase64.replace(/^data:audio\/[^;]+;base64,/, ''),
         },
       });
     }
 
     const systemPrompt =
       'You are an AI hazard classifier for GoliSafe civic safety in Dhaka, Bangladesh.\n' +
-      'Classify the citizen report (in Bangla, Banglish, or English) into JSON.\n' +
+      'Listen to the audio and/or inspect the image and text (in Bangla, Banglish, or English) and classify into JSON.\n' +
       'Allowed category values: "pothole_manhole", "waterlogging", "unlit_alley", "unsafe_footbridge", "extortion_spot".\n' +
       'Allowed severity values: "Low", "Medium", "Critical".\n' +
+      'If audio is provided, transcribe what the citizen actually said in the "transcript" field.\n' +
       'If category is "waterlogging", set waterlogging_depth to "Ankle-deep", "Knee-deep", or "Impassable".\n' +
       'Extract landmark_context if a Dhaka neighborhood or street is mentioned.\n' +
-      'Return ONLY a raw valid JSON object with keys: category, severity, landmark_context, waterlogging_depth, confidence, reasoning.';
+      'Return ONLY a raw valid JSON object with keys: category, severity, transcript, landmark_context, waterlogging_depth, confidence, reasoning.';
 
     parts.push({
-      text: `${systemPrompt}\nUser Report: "${combinedText || 'Analyze the provided media'}"`,
+      text: `${systemPrompt}\nUser Context: "${combinedText || 'Analyze the provided audio/image accurately'}"`,
     });
 
     const response = await fetch(geminiUrl, {
@@ -255,7 +284,7 @@ router.post('/classify', async (req: Request, res: Response) => {
 
     const category: HazardCategory = VALID_CATEGORIES.includes(parsed.category)
       ? parsed.category
-      : heuristicClassify(combinedText).category;
+      : heuristicClassify(combinedText, currentCategory).category;
 
     const severity: HazardSeverity = VALID_SEVERITIES.includes(parsed.severity)
       ? parsed.severity
@@ -269,6 +298,10 @@ router.post('/classify', async (req: Request, res: Response) => {
     const result: ClassifyResponse = {
       category,
       severity,
+      transcript:
+        typeof parsed.transcript === 'string' && parsed.transcript.trim()
+          ? parsed.transcript.trim()
+          : combinedText || undefined,
       landmark_context: parsed.landmark_context || undefined,
       waterlogging_depth:
         category === 'waterlogging' &&
@@ -283,8 +316,8 @@ router.post('/classify', async (req: Request, res: Response) => {
     return res.status(200).json(result);
   } catch (error: any) {
     clearTimeout(timeoutId);
-    // Graceful fallback on timeout (>4.5s) or API error
-    const fallbackResult = heuristicClassify(combinedText);
+    // Graceful fallback on timeout or API error
+    const fallbackResult = heuristicClassify(combinedText, currentCategory);
     return res.status(200).json(fallbackResult);
   }
 });

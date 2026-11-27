@@ -26,6 +26,7 @@ import type { QuickReportHazardPayload } from '../components/Report/QuickReportM
 import { TRANSLATIONS, type Language } from '../i18n/translations';
 import {
   classifyWithAI,
+  readFileAsBase64,
   uploadHazardImage,
   type AiClassificationResult,
 } from '../services/storage';
@@ -406,35 +407,57 @@ export default function FullReportScreen({
 
   const handlePickPhoto = async (fromCamera: boolean) => {
     try {
-      const perm = fromCamera
-        ? await ImagePicker.requestCameraPermissionsAsync()
-        : await ImagePicker.requestMediaLibraryPermissionsAsync();
-      if (!perm.granted) {
-        Alert.alert(
-          language === 'bn' ? 'অনুমতি প্রয়োজন' : 'Permission Required',
-          language === 'bn'
-            ? 'ছবি যুক্ত করতে অনুমতি দিন।'
-            : 'Please grant permission to attach photo evidence.',
-        );
-        return;
+      if (fromCamera) {
+        const perm = await ImagePicker.requestCameraPermissionsAsync();
+        if (!perm.granted) {
+          Alert.alert(
+            language === 'bn' ? 'অনুমতি প্রয়োজন' : 'Permission Required',
+            language === 'bn'
+              ? 'ছবি তুলতে ক্যামেরার অনুমতি দিন।'
+              : 'Please grant camera permission to capture photo evidence.',
+          );
+          return;
+        }
       }
       const res = fromCamera
         ? await ImagePicker.launchCameraAsync({
-            allowsEditing: true,
-            aspect: [4, 3],
+            mediaTypes: ['images'],
+            allowsEditing: false,
             quality: 0.7,
+            base64: true,
           })
         : await ImagePicker.launchImageLibraryAsync({
-            mediaTypes: ImagePicker.MediaTypeOptions.Images,
-            allowsEditing: true,
-            aspect: [4, 3],
+            mediaTypes: ['images'],
+            allowsEditing: false,
             quality: 0.7,
+            base64: true,
           });
       if (!res.canceled && res.assets?.[0]?.uri) {
-        setImageUri(res.assets[0].uri);
+        const asset = res.assets[0];
+        setImageUri(asset.uri);
+        if (asset.base64) {
+          setIsClassifying(true);
+          try {
+            const aiRes = await classifyWithAI({
+              imageBase64: asset.base64,
+              text: locationText.trim() || undefined,
+              currentCategory: category,
+            });
+            if (aiRes && !aiRes.fallback) {
+              setAiResult(aiRes);
+              setCategory(aiRes.category);
+              setSeverity(aiRes.severity);
+            }
+          } finally {
+            setIsClassifying(false);
+          }
+        }
       }
-    } catch {
-      // Non-fatal
+    } catch (err: any) {
+      Alert.alert(
+        language === 'bn' ? 'ত্রুটি' : 'Error',
+        err?.message || 'Unable to attach photo. Please try again.',
+      );
     }
   };
 
@@ -469,22 +492,35 @@ export default function FullReportScreen({
   const handleStopRecording = async () => {
     setIsRecording(false);
     try {
+      let recordedUri: string | null = null;
       if (recording) {
         await recording.stopAndUnloadAsync();
+        recordedUri = recording.getURI();
         setRecording(null);
       }
       setIsClassifying(true);
+      const audioBase64 = recordedUri ? await readFileAsBase64(recordedUri) : null;
       const res = await classifyWithAI({
-        text: `${voiceLang} report near ${locationText}: ${CATEGORY_META[category].name}`,
+        audioBase64: audioBase64 || undefined,
+        audioMimeType: 'audio/mp4',
+        text: locationText.trim() || undefined,
+        currentCategory: category,
       });
       setIsClassifying(false);
-      if (res) {
+      if (res && !res.fallback) {
         setAiResult(res);
         setCategory(res.category);
         setSeverity(res.severity);
         if (res.landmark_context) {
           setLocationText(res.landmark_context);
         }
+      } else {
+        Alert.alert(
+          language === 'bn' ? 'ভয়েস রেকর্ড সম্পন্ন' : 'Voice Recorded',
+          language === 'bn'
+            ? 'লাইভ AI ভয়েস বিশ্লেষণের জন্য সার্ভারে GEMINI_API_KEY প্রয়োজন — আপনার নির্বাচিত ক্যাটাগরি অপরিবর্তিত রাখা হয়েছে।'
+            : 'Live AI voice analysis requires GEMINI_API_KEY on the backend — your selected category was preserved.',
+        );
       }
     } catch {
       setIsClassifying(false);

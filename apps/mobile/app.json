@@ -22,7 +22,8 @@
         "ACCESS_FINE_LOCATION",
         "CAMERA",
         "RECORD_AUDIO",
-        "POST_NOTIFICATIONS"
+        "POST_NOTIFICATIONS",
+        "READ_MEDIA_IMAGES"
       ]
     },
     "plugins": [

@@ -10,12 +10,40 @@ export interface AiClassificationResult {
   transcript?: string;
   sub_tag?: string;
   landmark_context?: string;
+  fallback?: boolean;
+  reasoning?: string;
 }
 
 export interface ClassifyPayload {
   text?: string;
   audioBase64?: string;
+  audioMimeType?: string;
   imageBase64?: string;
+  currentCategory?: HazardCategory;
+}
+
+/**
+ * Reads a local Expo file URI (e.g. recorded .m4a audio or photo) as a raw base64 string
+ * using standard React Native fetch + FileReader (no extra native modules needed).
+ */
+export async function readFileAsBase64(uri: string): Promise<string | null> {
+  if (!uri) return null;
+  try {
+    const response = await fetch(uri);
+    const blob = await response.blob();
+    return await new Promise<string | null>((resolve) => {
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        const result = typeof reader.result === 'string' ? reader.result : '';
+        const commaIdx = result.indexOf(',');
+        resolve(commaIdx >= 0 ? result.slice(commaIdx + 1) : result || null);
+      };
+      reader.onerror = () => resolve(null);
+      reader.readAsDataURL(blob);
+    });
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -155,18 +183,36 @@ function localRuleBasedClassification(payload: ClassifyPayload): AiClassificatio
     };
   }
 
-  // Default pothole / open manhole
+  if (
+    text.includes('pothole') ||
+    text.includes('manhole') ||
+    text.includes('গর্ত') ||
+    text.includes('ম্যানহোল') ||
+    text.includes('gorto')
+  ) {
+    return {
+      category: 'pothole_manhole',
+      severity: 'Medium',
+      confidence: 0.86,
+      transcript: payload.text || 'রাস্তায় ম্যানহোল / গর্ত পরিলক্ষিত',
+      fallback: true,
+    };
+  }
+
+  // No matching text keywords: preserve user's selected category instead of resetting to pothole
   return {
-    category: 'pothole_manhole',
+    category: payload.currentCategory || 'pothole_manhole',
     severity: 'Medium',
-    confidence: 0.85,
-    transcript: payload.text || 'রাস্তায় ম্যানহোল / গর্ত পরিলক্ষিত',
+    confidence: 0.5,
+    transcript: payload.text || undefined,
+    fallback: true,
+    reasoning: 'Preserved selected category (AI service unavailable)',
   };
 }
 
 /**
- * Classify hazard content (audio voice transcript, image evidence, or text note)
- * via backend AI endpoint with a 5-second timeout and graceful local fallback.
+ * Classify hazard content (audio voice recording, image evidence, or text note)
+ * via backend AI endpoint with graceful local fallback.
  */
 export async function classifyWithAI(
   payload: ClassifyPayload,
@@ -175,10 +221,11 @@ export async function classifyWithAI(
     process.env.EXPO_PUBLIC_API_URL || 'https://golisafe.onrender.com/api';
   const url = `${apiBase}/ai/classify`;
 
+  const hasMedia = Boolean(payload.audioBase64 || payload.imageBase64);
   const controller = new AbortController();
   const timer = setTimeout(() => {
     controller.abort();
-  }, 5000);
+  }, hasMedia ? 10500 : 5000);
 
   try {
     const res = await fetch(url, {
@@ -202,6 +249,8 @@ export async function classifyWithAI(
           transcript: data.transcript || payload.text,
           sub_tag: data.sub_tag,
           landmark_context: data.landmark_context,
+          fallback: Boolean(data.fallback),
+          reasoning: data.reasoning,
         };
       }
     }
@@ -212,7 +261,7 @@ export async function classifyWithAI(
     clearTimeout(timer);
     const isTimeout = error?.name === 'AbortError';
     if (isTimeout) {
-      console.warn('[Storage] classifyWithAI request timed out after 5s');
+      console.warn('[Storage] classifyWithAI request timed out');
     }
     // Graceful heuristic fallback
     return localRuleBasedClassification(payload);

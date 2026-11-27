@@ -460,6 +460,10 @@ export default function MapScreen() {
     longitude: number;
     accuracy: number;
   } | null>(null);
+  const pendingGpsMoveRef = useRef<{
+    latitude: number;
+    longitude: number;
+  } | null>(null);
 
   const theme = isNighttime ? DARK_THEME : LIGHT_THEME;
   const copy = UI_COPY[locale];
@@ -716,8 +720,8 @@ export default function MapScreen() {
         sub = await Location.watchPositionAsync(
           {
             accuracy: Location.Accuracy.High,
-            distanceInterval: 15,
-            timeInterval: 8000,
+            distanceInterval: 20,
+            timeInterval: 10000,
           },
           (loc) => {
             if (!mounted) return;
@@ -729,6 +733,10 @@ export default function MapScreen() {
               typeof loc.coords.accuracy === 'number'
                 ? loc.coords.accuracy
                 : 50;
+            const speed =
+              typeof loc.coords.speed === 'number' && loc.coords.speed >= 0
+                ? loc.coords.speed
+                : 0;
 
             if (typeof loc.coords.accuracy === 'number') {
               setGpsAccuracyMeters(loc.coords.accuracy);
@@ -737,7 +745,10 @@ export default function MapScreen() {
               }
             }
 
-            // Indoor GPS jitter filter: ignore noisy low-accuracy spikes or sub-uncertainty drift
+            // Strong indoor GPS anti-jitter filter:
+            // When stationary (speed < 0.8 m/s), require 2 consecutive fixes near the new
+            // location (> 40m away with good accuracy <= 30m) so Wi-Fi/cell jumps never
+            // make the blue dot dance around indoors.
             const prev = lastGoodGpsRef.current;
             if (prev) {
               const jumpMeters = computeDistanceMeters(
@@ -746,13 +757,33 @@ export default function MapScreen() {
                 nextCoords.latitude,
                 nextCoords.longitude,
               );
-              const isNoisySpike = acc > 45 && acc > prev.accuracy * 1.35;
-              const isIndoorDrift = jumpMeters < Math.max(20, acc * 0.8);
-              if (isNoisySpike || isIndoorDrift) {
+              if (acc > 45 && acc > prev.accuracy * 1.3) {
+                return;
+              }
+              if (speed < 0.8) {
+                if (jumpMeters < Math.max(40, acc * 1.2) || acc > 35) {
+                  pendingGpsMoveRef.current = null;
+                  return;
+                }
+                const pending = pendingGpsMoveRef.current;
+                if (
+                  !pending ||
+                  computeDistanceMeters(
+                    pending.latitude,
+                    pending.longitude,
+                    nextCoords.latitude,
+                    nextCoords.longitude,
+                  ) > 25
+                ) {
+                  pendingGpsMoveRef.current = nextCoords;
+                  return;
+                }
+              } else if (jumpMeters < Math.max(15, acc * 0.6)) {
                 return;
               }
             }
 
+            pendingGpsMoveRef.current = null;
             lastGoodGpsRef.current = { ...nextCoords, accuracy: acc };
             setUserLocation(nextCoords);
             setHasRealGpsFix(true);

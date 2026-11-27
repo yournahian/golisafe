@@ -23,6 +23,7 @@ import {
 import {
   uploadHazardImage,
   classifyWithAI,
+  readFileAsBase64,
   type AiClassificationResult,
 } from '../../services/storage';
 
@@ -234,47 +235,42 @@ export const QuickReportModal: React.FC<QuickReportModalProps> = ({
 
   const handlePickFromGallery = async () => {
     try {
-      const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
-      if (!permission.granted) {
-        Alert.alert(
-          language === 'bn' ? 'অনুমতি প্রয়োজন' : 'Permission Required',
-          language === 'bn'
-            ? 'ছবি আপলোড করতে ফটো লাইব্রেরির অনুমতি দিন।'
-            : 'Please grant media library access to attach photo evidence.'
-        );
-        return;
-      }
       const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ImagePicker.MediaTypeOptions.Images,
-        allowsEditing: true,
-        aspect: [4, 3],
+        mediaTypes: ['images'],
+        allowsEditing: false,
         quality: 0.7,
+        base64: true,
       });
       if (!result.canceled && result.assets && result.assets.length > 0) {
-        const picked = result.assets[0].uri;
-        setImageUri(picked);
+        const asset = result.assets[0];
+        setImageUri(asset.uri);
 
-        // Optional quick AI check on attached photo
-        setIsClassifying(true);
-        try {
-          const aiRes = await classifyWithAI({
-            text: 'Road surface hazard photo uploaded',
-          });
-          if (aiRes) {
-            setSelectedCategory(aiRes.category);
-            setSelectedSeverity(aiRes.severity);
-            setAiDraft(aiRes);
+        // Send actual image base64 to Gemini Vision AI (never overwrite user choice on fallback)
+        if (asset.base64) {
+          setIsClassifying(true);
+          try {
+            const aiRes = await classifyWithAI({
+              imageBase64: asset.base64,
+              text: landmarkContext.trim() || undefined,
+              currentCategory: selectedCategory,
+            });
+            if (aiRes && !aiRes.fallback) {
+              setSelectedCategory(aiRes.category);
+              setSelectedSeverity(aiRes.severity);
+              setAiDraft(aiRes);
+            }
+          } finally {
+            setIsClassifying(false);
           }
-        } finally {
-          setIsClassifying(false);
         }
       }
-    } catch {
+    } catch (err: any) {
+      console.warn('[QuickReport] Gallery pick failed:', err);
       Alert.alert(
         language === 'bn' ? 'ত্রুটি' : 'Error',
         language === 'bn'
           ? 'ছবি নির্বাচন করতে ব্যর্থ হয়েছে।'
-          : 'Unable to select image. Please try again.'
+          : `Unable to select image. ${err?.message || 'Please try again.'}`
       );
     }
   };
@@ -292,34 +288,40 @@ export const QuickReportModal: React.FC<QuickReportModalProps> = ({
         return;
       }
       const result = await ImagePicker.launchCameraAsync({
-        allowsEditing: true,
-        aspect: [4, 3],
+        mediaTypes: ['images'],
+        allowsEditing: false,
         quality: 0.7,
+        base64: true,
       });
       if (!result.canceled && result.assets && result.assets.length > 0) {
-        const captured = result.assets[0].uri;
-        setImageUri(captured);
+        const asset = result.assets[0];
+        setImageUri(asset.uri);
 
-        setIsClassifying(true);
-        try {
-          const aiRes = await classifyWithAI({
-            text: 'Live camera evidence photo',
-          });
-          if (aiRes) {
-            setSelectedCategory(aiRes.category);
-            setSelectedSeverity(aiRes.severity);
-            setAiDraft(aiRes);
+        if (asset.base64) {
+          setIsClassifying(true);
+          try {
+            const aiRes = await classifyWithAI({
+              imageBase64: asset.base64,
+              text: landmarkContext.trim() || undefined,
+              currentCategory: selectedCategory,
+            });
+            if (aiRes && !aiRes.fallback) {
+              setSelectedCategory(aiRes.category);
+              setSelectedSeverity(aiRes.severity);
+              setAiDraft(aiRes);
+            }
+          } finally {
+            setIsClassifying(false);
           }
-        } finally {
-          setIsClassifying(false);
         }
       }
-    } catch {
+    } catch (err: any) {
+      console.warn('[QuickReport] Camera capture failed:', err);
       Alert.alert(
         language === 'bn' ? 'ত্রুটি' : 'Error',
         language === 'bn'
           ? 'ছবি ক্যাপচার করতে ব্যর্থ হয়েছে।'
-          : 'Unable to capture photo. Please try again.'
+          : `Unable to capture photo. ${err?.message || 'Please try again.'}`
       );
     }
   };
@@ -375,27 +377,31 @@ export const QuickReportModal: React.FC<QuickReportModalProps> = ({
 
       if (uri) {
         setIsClassifying(true);
-        // Call AI classification with 5-second timeout and fallback (FR-13, NFR-19)
+        const audioBase64 = await readFileAsBase64(uri);
         const classification = await classifyWithAI({
-          text: 'Dhaka street hazard voice report',
+          audioBase64: audioBase64 || undefined,
+          audioMimeType: 'audio/mp4',
+          text: landmarkContext.trim() || undefined,
+          currentCategory: selectedCategory,
         });
         setIsClassifying(false);
 
-        if (classification) {
+        if (classification && !classification.fallback) {
           setSelectedCategory(classification.category);
           setSelectedSeverity(classification.severity);
           if (classification.sub_tag) {
             setSelectedSubtag(classification.sub_tag);
           }
-          if (classification.transcript && !landmarkContext) {
+          if (classification.transcript && !landmarkContext.trim()) {
             setLandmarkContext(classification.transcript);
           }
           setAiDraft(classification);
         } else {
+          // Backend Gemini key not configured or timed out — keep user's selected category!
           setAiTimeoutNotice(
             language === 'bn'
-              ? 'এআই প্রক্রিয়া সম্পন্ন হতে পারেনি — ম্যানুয়ালি নির্বাচন করুন।'
-              : 'AI analysis timed out — select category manually.'
+              ? 'ভয়েস রেকর্ড সংরক্ষিত হয়েছে। লাইভ AI ট্রান্সক্রিপশনের জন্য সার্ভারে GEMINI_API_KEY প্রয়োজন — আপনার নির্বাচিত ক্যাটাগরি অপরিবর্তিত রাখা হয়েছে।'
+              : 'Voice recorded. Live AI transcription requires GEMINI_API_KEY on backend — your selected category was kept.'
           );
         }
       }
