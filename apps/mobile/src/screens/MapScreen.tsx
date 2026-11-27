@@ -61,6 +61,7 @@ import {
   type TappedLocationState,
 } from './mapGeoUtils';
 import { styles } from './MapScreen.styles';
+import FullReportScreen, { type FullReportDraft } from './FullReportScreen';
 import { LEAFLET_HTML } from './mapTemplate';
 
 try {
@@ -388,6 +389,9 @@ export default function MapScreen() {
   const [demoMode, setDemoMode] = useState<boolean>(true);
   const [selectedHazardId, setSelectedHazardId] = useState<string | null>(null);
   const [reportModalVisible, setReportModalVisible] = useState<boolean>(false);
+  const [fullReportVisible, setFullReportVisible] = useState<boolean>(false);
+  const [fullReportDraft, setFullReportDraft] =
+    useState<FullReportDraft | null>(null);
   const [tappedLocation, setTappedLocation] =
     useState<TappedLocationState | null>(null);
 
@@ -1399,11 +1403,12 @@ export default function MapScreen() {
     categoryFilter !== 'all' ||
     searchQuery.trim().length > 0;
 
-  const activeTab: BottomTab = reportModalVisible
-    ? 'report'
-    : alertsSheetOpen
-      ? 'alerts'
-      : 'map';
+  const activeTab: BottomTab =
+    reportModalVisible || fullReportVisible
+      ? 'report'
+      : alertsSheetOpen
+        ? 'alerts'
+        : 'map';
 
   const topInset = Platform.OS === 'android' ? 10 : 48;
   const hasActiveRoutes = routeOptions.length > 0;
@@ -3009,7 +3014,9 @@ export default function MapScreen() {
           style={styles.navItem}
           onPress={() => {
             setAlertsSheetOpen(false);
-            setReportModalVisible(true);
+            setReportModalVisible(false);
+            setFullReportDraft(null);
+            setFullReportVisible(true);
           }}
           activeOpacity={0.8}
         >
@@ -3065,9 +3072,40 @@ export default function MapScreen() {
         onClose={() => {
           setReportModalVisible(false);
         }}
+        onOpenFullReport={(draft) => {
+          setReportModalVisible(false);
+          setFullReportDraft(draft);
+          setFullReportVisible(true);
+        }}
         onSubmitHazard={handleSubmitHazard}
         isDark={isNighttime}
         language={locale}
+      />
+
+      <FullReportScreen
+        visible={fullReportVisible}
+        userLocation={userLocation}
+        initialCoords={
+          tappedLocation
+            ? {
+                latitude: tappedLocation.latitude,
+                longitude: tappedLocation.longitude,
+              }
+            : null
+        }
+        initialLabel={tappedLocation?.label ?? null}
+        draft={fullReportDraft}
+        isDark={isNighttime}
+        language={locale}
+        onClose={() => {
+          setFullReportVisible(false);
+          setFullReportDraft(null);
+        }}
+        onOpenAlerts={() => {
+          setAlertsSheetOpen(true);
+          loadHazards();
+        }}
+        onSubmitHazard={handleSubmitHazard}
       />
 
       <AuthModal

@@ -37,6 +37,14 @@ export interface QuickReportModalProps {
   initialCoords?: { latitude: number; longitude: number } | null;
   onClose: () => void;
   onSubmitHazard: (payload: QuickReportHazardPayload) => Promise<void>;
+  onOpenFullReport?: (draft: {
+    category: HazardCategory;
+    severity: HazardSeverity;
+    latitude: number;
+    longitude: number;
+    landmarkContext: string;
+    imageUri?: string;
+  }) => void;
   isDark?: boolean;
   language?: 'en' | 'bn';
 }
@@ -107,6 +115,7 @@ export const QuickReportModal: React.FC<QuickReportModalProps> = ({
   initialCoords,
   onClose,
   onSubmitHazard,
+  onOpenFullReport,
   isDark = true,
   language = 'en',
 }) => {
@@ -993,6 +1002,28 @@ export const QuickReportModal: React.FC<QuickReportModalProps> = ({
               />
             </View>
 
+            {/* Full Report Form Button (Figma HUD -> Full Report Page Flow) */}
+            {onOpenFullReport && (
+              <TouchableOpacity
+                style={styles.fullReportFormButton}
+                onPress={() => {
+                  onOpenFullReport({
+                    category: selectedCategory,
+                    severity: selectedSeverity,
+                    latitude,
+                    longitude,
+                    landmarkContext: landmarkContext.trim(),
+                    imageUri: imageUri || undefined,
+                  });
+                }}
+                activeOpacity={0.85}
+              >
+                <Text style={styles.fullReportFormButtonText}>
+                  {language === 'bn' ? 'সম্পূর্ণ রিপোর্ট ফর্ম' : 'Full Report Form'}
+                </Text>
+              </TouchableOpacity>
+            )}
+
             {/* Submit Button */}
             <TouchableOpacity
               style={[
@@ -1417,6 +1448,21 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     color: '#F8FAFC',
     fontSize: 13,
+  },
+  fullReportFormButton: {
+    height: 44,
+    borderRadius: 12,
+    backgroundColor: '#1E293B',
+    borderWidth: 1.5,
+    borderColor: '#3B82F6',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 8,
+  },
+  fullReportFormButtonText: {
+    fontSize: 13.5,
+    fontWeight: '700',
+    color: '#93C5FD',
   },
   submitButton: {
     height: 46,
