@@ -100,26 +100,50 @@ async function getActiveHazards(): Promise<HazardRecord[]> {
 }
 
 /**
- * Calculates risk score and count of hazards within 150m of a polyline.
- * Critical / High = +30, Medium = +15, Low = +5
+ * Calculates micro-hazard risk score and minimum hazard clearance for a polyline.
+ * Uses tight street-level hit radius (<= 45m) so parallel-street detours genuinely
+ * score Risk 0 instead of tying with the direct hazard-blocked street.
  */
 function evaluateRouteRisk(
   coords: Array<[number, number]>,
   activeHazards: HazardRecord[]
-): { riskScore: number; hazardsNearRoute: number } {
+): { riskScore: number; hazardsNearRoute: number; minClearanceMeters: number } {
   let riskScore = 0;
   let hazardsNearRoute = 0;
+  let minClearanceMeters = 99999;
+
+  // Skip the very first/last endpoint if user starts/ends right beside a hazard
+  // so only the actual road path taken determines whether the route passes through the hazard
+  const startPt = coords[0];
+  const endPt = coords[coords.length - 1];
+  const interiorCoords =
+    coords.length > 3
+      ? coords.slice(1, coords.length - 1)
+      : coords;
 
   for (const hazard of activeHazards) {
+    // Ignore hazards sitting directly on the exact destination point (< 20m)
+    if (
+      endPt &&
+      haversineDistanceMeters(hazard.latitude, hazard.longitude, endPt[0], endPt[1]) < 20
+    ) {
+      continue;
+    }
+
     let minDistance = Infinity;
-    for (const [lat, lng] of coords) {
+    for (const [lat, lng] of interiorCoords) {
       const d = haversineDistanceMeters(hazard.latitude, hazard.longitude, lat, lng);
       if (d < minDistance) {
         minDistance = d;
       }
     }
 
-    if (minDistance <= 150) {
+    if (minDistance < minClearanceMeters) {
+      minClearanceMeters = minDistance;
+    }
+
+    // Street-level direct hit (<= 45m): full severity risk penalty
+    if (minDistance <= 45) {
       hazardsNearRoute++;
       const sev = (hazard.severity || '').toString().toLowerCase();
       if (sev === 'critical' || sev === 'high') {
@@ -131,10 +155,18 @@ function evaluateRouteRisk(
       } else {
         riskScore += 10;
       }
+    } else if (
+      minDistance <= 85 &&
+      startPt &&
+      haversineDistanceMeters(hazard.latitude, hazard.longitude, startPt[0], startPt[1]) > 60
+    ) {
+      // Secondary proximity penalty only if route approaches a distant hazard closely
+      hazardsNearRoute++;
+      riskScore += 5;
     }
   }
 
-  return { riskScore, hazardsNearRoute };
+  return { riskScore, hazardsNearRoute, minClearanceMeters };
 }
 
 /**
@@ -369,12 +401,20 @@ router.get('/safe', async (req: Request, res: Response) => {
     ];
   }
 
-  // Sort and select up to 2 distinct real street options: 'Safest Route' and 'Fastest Route'
+  // Sort and select Fastest Route (always shortest duration/distance) vs Safest Route (lowest risk)
   const options: RouteOption[] = [];
 
-  // 1. Safest Route (lowest riskScore, then shortest duration)
+  // 1. Fastest Route = shortest durationSeconds (then shortest distanceMeters)
+  const fastestCandidate = [...evaluatedRoutes].sort(
+    (a, b) => a.durationSeconds - b.durationSeconds || a.distanceMeters - b.distanceMeters
+  )[0];
+
+  // 2. Safest Route = strictly lowest riskScore (tie-break: shortest duration)
   const safestCandidate = [...evaluatedRoutes].sort(
-    (a, b) => a.riskScore - b.riskScore || a.durationSeconds - b.durationSeconds
+    (a, b) =>
+      a.riskScore - b.riskScore ||
+      a.hazardsNearRoute - b.hazardsNearRoute ||
+      a.durationSeconds - b.durationSeconds
   )[0];
 
   options.push({
@@ -387,19 +427,12 @@ router.get('/safe', async (req: Request, res: Response) => {
     coordinates: safestCandidate.coordinates,
   });
 
-  // 2. Fastest Route (shortest durationSeconds that differs from safest)
-  const remaining = evaluatedRoutes.filter(
-    (r) =>
-      r !== safestCandidate &&
-      (Math.abs(r.distanceMeters - safestCandidate.distanceMeters) > 15 ||
-        r.riskScore !== safestCandidate.riskScore)
-  );
-
-  if (remaining.length > 0) {
-    const fastestCandidate = remaining.sort(
-      (a, b) => a.durationSeconds - b.durationSeconds || a.riskScore - b.riskScore
-    )[0];
-
+  // Only include Fastest Route as a second toggle option if it is actually faster/shorter
+  // than the Safest Route (never label a longer detour as "Fastest Route")
+  if (
+    fastestCandidate !== safestCandidate &&
+    fastestCandidate.distanceMeters < safestCandidate.distanceMeters
+  ) {
     options.push({
       id: 'fastest',
       label: 'Fastest Route',

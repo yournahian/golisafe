@@ -29,7 +29,13 @@ import {
   uploadHazardImage,
   type AiClassificationResult,
 } from '../services/storage';
-import { CATEGORY_META, DARK_THEME, LIGHT_THEME, MODULE_ORDER } from './mapConstants';
+import {
+  CATEGORY_META,
+  DARK_THEME,
+  DHAKA_STREETS,
+  LIGHT_THEME,
+  MODULE_ORDER,
+} from './mapConstants';
 import { computeDistanceMeters } from './mapGeoUtils';
 
 export interface FullReportDraft {
@@ -334,6 +340,27 @@ export default function FullReportScreen({
       sub?.remove();
     };
   }, [visible, category]);
+
+  // Dynamically pick the 5 nearest landmarks to the user's current GPS / selected pin
+  const nearbyPresets = useMemo(() => {
+    return [...DHAKA_STREETS]
+      .sort(
+        (a, b) =>
+          computeDistanceMeters(
+            effectiveInitLat,
+            effectiveInitLng,
+            a.latitude,
+            a.longitude,
+          ) -
+          computeDistanceMeters(
+            effectiveInitLat,
+            effectiveInitLng,
+            b.latitude,
+            b.longitude,
+          ),
+      )
+      .slice(0, 5);
+  }, [effectiveInitLat, effectiveInitLng]);
 
   const distanceText = useMemo(() => {
     const meters = computeDistanceMeters(
@@ -681,7 +708,7 @@ export default function FullReportScreen({
             </View>
 
             <View style={styles.presetWrap}>
-              {LANDMARK_PRESETS.map((preset) => {
+              {nearbyPresets.map((preset) => {
                 const selected = locationText.trim() === preset.label;
                 return (
                   <TouchableOpacity

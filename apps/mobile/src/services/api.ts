@@ -65,16 +65,30 @@ function scorePolylineRisk(
   let riskScore = 0;
   let hazardsNearRoute = 0;
 
+  const startPt = coords[0];
+  const endPt = coords[coords.length - 1];
+  const interiorCoords =
+    coords.length > 3 ? coords.slice(1, coords.length - 1) : coords;
+
   for (const hazard of hazards) {
     if (hazard.status === 'resolved' || hazard.status === 'expired') continue;
+    if (
+      endPt &&
+      haversineMeters(hazard.latitude, hazard.longitude, endPt[0], endPt[1]) < 20
+    ) {
+      continue;
+    }
+
     let minDistance = Number.POSITIVE_INFINITY;
-    for (const [lat, lng] of coords) {
+    for (const [lat, lng] of interiorCoords) {
       const d = haversineMeters(hazard.latitude, hazard.longitude, lat, lng);
       if (d < minDistance) {
         minDistance = d;
       }
     }
-    if (minDistance <= 150) {
+
+    // Tight street-level hit radius (<= 45m) so parallel-street detours score Risk 0
+    if (minDistance <= 45) {
       hazardsNearRoute += 1;
       const sev = (hazard.severity || '').toLowerCase();
       if (sev === 'critical' || sev === 'high') {
@@ -84,6 +98,13 @@ function scorePolylineRisk(
       } else {
         riskScore += 5;
       }
+    } else if (
+      minDistance <= 85 &&
+      startPt &&
+      haversineMeters(hazard.latitude, hazard.longitude, startPt[0], startPt[1]) > 60
+    ) {
+      hazardsNearRoute += 1;
+      riskScore += 5;
     }
   }
 
@@ -588,20 +609,19 @@ export async function fetchSafeRoutes(
     ];
   }
 
-  const safest = [...candidates].sort(
-    (a, b) => a.riskScore - b.riskScore || a.durationSeconds - b.durationSeconds,
+  const fastest = [...candidates].sort(
+    (a, b) => a.durationSeconds - b.durationSeconds || a.distanceMeters - b.distanceMeters,
   )[0];
 
-  const remaining = candidates.filter(
-    (c) =>
-      c !== safest &&
-      (Math.abs(c.distanceMeters - safest.distanceMeters) > 15 ||
-        c.riskScore !== safest.riskScore),
-  );
-  if (remaining.length > 0) {
-    const fastest = remaining.sort(
-      (a, b) => a.durationSeconds - b.durationSeconds || a.riskScore - b.riskScore,
-    )[0];
+  const safest = [...candidates].sort(
+    (a, b) =>
+      a.riskScore - b.riskScore ||
+      a.hazardsNearRoute - b.hazardsNearRoute ||
+      a.durationSeconds - b.durationSeconds,
+  )[0];
+
+  // Never label a longer detour as "Fastest Route"
+  if (fastest !== safest && fastest.distanceMeters < safest.distanceMeters) {
     return [
       {
         id: 'safest',
