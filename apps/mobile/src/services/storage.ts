@@ -225,7 +225,7 @@ export async function classifyWithAI(
   const controller = new AbortController();
   const timer = setTimeout(() => {
     controller.abort();
-  }, hasMedia ? 10500 : 5000);
+  }, hasMedia ? 14000 : 8000);
 
   try {
     const res = await fetch(url, {

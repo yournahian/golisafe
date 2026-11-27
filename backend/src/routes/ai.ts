@@ -194,13 +194,14 @@ router.post('/classify', async (req: Request, res: Response) => {
   }
 
   const hasMedia = Boolean(audioBase64 || imageBase64);
-  const timeoutMs = hasMedia ? 9000 : 4500;
+  const timeoutMs = hasMedia ? 12000 : 7000;
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
-    const geminiModel = process.env.GEMINI_MODEL || 'gemini-3.8-flash';
-    const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${geminiModel}:generateContent?key=${apiKey}`;
+    const candidateModels = process.env.GEMINI_MODEL
+      ? [process.env.GEMINI_MODEL]
+      : ['gemini-3.5-flash-lite', 'gemini-3.8-flash'];
 
     const parts: any[] = [];
 
@@ -240,25 +241,36 @@ router.post('/classify', async (req: Request, res: Response) => {
       text: `${systemPrompt}\nUser Context: "${combinedText || 'Analyze the provided audio/image accurately'}"`,
     });
 
-    const response = await fetch(geminiUrl, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        contents: [{ parts }],
-        generationConfig: {
-          response_mime_type: 'application/json',
-          temperature: 0.1,
+    let response: globalThis.Response | null = null;
+    let usedModel = candidateModels[0];
+
+    for (const model of candidateModels) {
+      usedModel = model;
+      const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+      const attempt = await fetch(geminiUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
         },
-      }),
-      signal: controller.signal,
-    });
+        body: JSON.stringify({
+          contents: [{ parts }],
+          generationConfig: {
+            response_mime_type: 'application/json',
+            temperature: 0.1,
+          },
+        }),
+        signal: controller.signal,
+      });
+      if (attempt.ok) {
+        response = attempt;
+        break;
+      }
+    }
 
     clearTimeout(timeoutId);
 
-    if (!response.ok) {
-      throw new Error(`Gemini API HTTP ${response.status}`);
+    if (!response || !response.ok) {
+      throw new Error(`Gemini API failed for models: ${candidateModels.join(', ')}`);
     }
 
     const jsonResult: any = await response.json();
@@ -311,7 +323,7 @@ router.post('/classify', async (req: Request, res: Response) => {
           : undefined,
       confidence,
       fallback: false,
-      reasoning: parsed.reasoning || `Classified by ${geminiModel}`,
+      reasoning: parsed.reasoning || `Classified by ${usedModel}`,
     };
 
     return res.status(200).json(result);
