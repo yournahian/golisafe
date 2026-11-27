@@ -199,7 +199,8 @@ router.post('/classify', async (req: Request, res: Response) => {
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
-    const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`;
+    const geminiModel = process.env.GEMINI_MODEL || 'gemini-3.8-flash';
+    const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${geminiModel}:generateContent?key=${apiKey}`;
 
     const parts: any[] = [];
 
@@ -310,7 +311,7 @@ router.post('/classify', async (req: Request, res: Response) => {
           : undefined,
       confidence,
       fallback: false,
-      reasoning: parsed.reasoning || 'Classified by Gemini 2.5 Flash',
+      reasoning: parsed.reasoning || `Classified by ${geminiModel}`,
     };
 
     return res.status(200).json(result);
