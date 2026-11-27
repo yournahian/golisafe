@@ -138,34 +138,115 @@ function evaluateRouteRisk(
 }
 
 /**
- * Builds a direct or curved synthetic fallback polyline when OSRM is unreachable.
+ * Fetches a real road-following OSRM foot route through a perpendicular via-waypoint
+ * so the Safest Route genuinely bypasses hazards along real adjacent streets/alleys.
  */
-function generateFallbackPolyline(
+async function fetchOsrmViaRoute(
+  sLat: number,
+  sLng: number,
+  viaLat: number,
+  viaLng: number,
+  eLat: number,
+  eLng: number,
+  activeHazards: HazardRecord[]
+): Promise<{
+  coordinates: Array<[number, number]>;
+  distanceMeters: number;
+  durationSeconds: number;
+  riskScore: number;
+  hazardsNearRoute: number;
+} | null> {
+  try {
+    const url = `https://router.project-osrm.org/route/v1/foot/${sLng},${sLat};${viaLng},${viaLat};${eLng},${eLat}?overview=full&geometries=geojson`;
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 5000);
+    const resp = await fetch(url, { signal: controller.signal });
+    clearTimeout(timeoutId);
+    if (!resp.ok) return null;
+    const json: any = await resp.json();
+    const rawRoute = json?.routes?.[0];
+    const rawCoords = rawRoute?.geometry?.coordinates;
+    if (!Array.isArray(rawCoords) || rawCoords.length < 2) return null;
+    const coords: Array<[number, number]> = rawCoords.map(
+      ([lng, lat]: [number, number]) => [lat, lng]
+    );
+    const distanceMeters =
+      typeof rawRoute.distance === 'number'
+        ? Math.round(rawRoute.distance)
+        : computePolylineDistanceMeters(coords);
+    const durationSeconds =
+      typeof rawRoute.duration === 'number'
+        ? Math.round(rawRoute.duration)
+        : Math.round(distanceMeters / 1.3);
+    const { riskScore, hazardsNearRoute } = evaluateRouteRisk(
+      coords,
+      activeHazards
+    );
+    return {
+      coordinates: coords,
+      distanceMeters,
+      durationSeconds,
+      riskScore,
+      hazardsNearRoute,
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Generates real street-following left/right side-street bypass routes via OSRM
+ * when the direct route passes near hazards or when OSRM only returned 1 route.
+ */
+async function generateRealStreetDetours(
   sLat: number,
   sLng: number,
   eLat: number,
   eLng: number,
-  offsetFactor = 0
-): Array<[number, number]> {
-  const points: Array<[number, number]> = [];
-  const steps = 10;
+  activeHazards: HazardRecord[]
+): Promise<
+  Array<{
+    coordinates: Array<[number, number]>;
+    distanceMeters: number;
+    durationSeconds: number;
+    riskScore: number;
+    hazardsNearRoute: number;
+  }>
+> {
+  const midLat = (sLat + eLat) / 2;
+  const midLng = (sLng + eLng) / 2;
+  const dLat = eLat - sLat;
+  const dLng = eLng - sLng;
+  const len = Math.sqrt(dLat * dLat + dLng * dLng) || 0.002;
+  // ~140m–180m perpendicular offset into parallel goli/street
+  const offsetDeg = Math.min(0.0022, Math.max(0.0013, len * 0.45));
+  const perpLat = (-dLng / len) * offsetDeg;
+  const perpLng = (dLat / len) * offsetDeg;
 
-  const dx = eLng - sLng;
-  const dy = eLat - sLat;
-  // Perpendicular vector for curved offset
-  const perpX = -dy;
-  const perpY = dx;
+  const [leftRoute, rightRoute] = await Promise.all([
+    fetchOsrmViaRoute(
+      sLat,
+      sLng,
+      Number((midLat + perpLat).toFixed(6)),
+      Number((midLng + perpLng).toFixed(6)),
+      eLat,
+      eLng,
+      activeHazards
+    ),
+    fetchOsrmViaRoute(
+      sLat,
+      sLng,
+      Number((midLat - perpLat).toFixed(6)),
+      Number((midLng - perpLng).toFixed(6)),
+      eLat,
+      eLng,
+      activeHazards
+    ),
+  ]);
 
-  for (let i = 0; i <= steps; i++) {
-    const t = i / steps;
-    // Parabolic arc for smooth detour
-    const arc = Math.sin(t * Math.PI) * offsetFactor;
-    const lat = sLat + t * dy + arc * perpY;
-    const lng = sLng + t * dx + arc * perpX;
-    points.push([Number(lat.toFixed(6)), Number(lng.toFixed(6))]);
-  }
-
-  return points;
+  return [leftRoute, rightRoute].filter(
+    (r): r is NonNullable<typeof r> => r !== null
+  );
 }
 
 /**
@@ -252,27 +333,32 @@ router.get('/safe', async (req: Request, res: Response) => {
     // OSRM timed out or failed; will trigger fallback below
   }
 
-  // Graceful fallback if OSRM returned 0 routes or failed
-  if (evaluatedRoutes.length === 0) {
-    const directCoords = generateFallbackPolyline(sLat, sLng, eLat, eLng, 0);
-    const detourCoords = generateFallbackPolyline(sLat, sLng, eLat, eLng, 0.25);
+  // If OSRM returned 1 route OR the primary route hits hazards, query real adjacent-street OSRM bypasses
+  if (
+    evaluatedRoutes.length === 1 ||
+    (evaluatedRoutes.length > 0 &&
+      evaluatedRoutes.every((r) => r.riskScore > 0))
+  ) {
+    const streetDetours = await generateRealStreetDetours(
+      sLat,
+      sLng,
+      eLat,
+      eLng,
+      activeHazards
+    );
+    evaluatedRoutes.push(...streetDetours);
+  }
 
-    const directDist = computePolylineDistanceMeters(directCoords);
+  // Last-resort straight fallback ONLY if OSRM is completely unreachable
+  if (evaluatedRoutes.length === 0) {
+    const directCoords: Array<[number, number]> = [
+      [sLat, sLng],
+      [eLat, eLng],
+    ];
+    const directDist = Math.max(100, computePolylineDistanceMeters(directCoords));
     const directDur = Math.round(directDist / 1.3);
     const directRisk = evaluateRouteRisk(directCoords, activeHazards);
-
-    const detourDist = computePolylineDistanceMeters(detourCoords);
-    const detourDur = Math.round(detourDist / 1.3);
-    const detourRisk = evaluateRouteRisk(detourCoords, activeHazards);
-
     evaluatedRoutes = [
-      {
-        coordinates: detourCoords,
-        distanceMeters: detourDist,
-        durationSeconds: detourDur,
-        riskScore: Math.max(0, detourRisk.riskScore - 10), // Detour bypasses corridor
-        hazardsNearRoute: Math.max(0, detourRisk.hazardsNearRoute - 1),
-      },
       {
         coordinates: directCoords,
         distanceMeters: directDist,
@@ -283,10 +369,10 @@ router.get('/safe', async (req: Request, res: Response) => {
     ];
   }
 
-  // Sort and select up to 2 distinct options: 'Safest Route' and 'Fastest Route'
+  // Sort and select up to 2 distinct real street options: 'Safest Route' and 'Fastest Route'
   const options: RouteOption[] = [];
 
-  // 1. Safest Route (lowest riskScore)
+  // 1. Safest Route (lowest riskScore, then shortest duration)
   const safestCandidate = [...evaluatedRoutes].sort(
     (a, b) => a.riskScore - b.riskScore || a.durationSeconds - b.durationSeconds
   )[0];
@@ -301,12 +387,11 @@ router.get('/safe', async (req: Request, res: Response) => {
     coordinates: safestCandidate.coordinates,
   });
 
-  // 2. Fastest Route (shortest durationSeconds)
+  // 2. Fastest Route (shortest durationSeconds that differs from safest)
   const remaining = evaluatedRoutes.filter(
     (r) =>
       r !== safestCandidate &&
-      (r.durationSeconds !== safestCandidate.durationSeconds ||
-        r.distanceMeters !== safestCandidate.distanceMeters ||
+      (Math.abs(r.distanceMeters - safestCandidate.distanceMeters) > 15 ||
         r.riskScore !== safestCandidate.riskScore)
   );
 
@@ -323,25 +408,6 @@ router.get('/safe', async (req: Request, res: Response) => {
       riskScore: fastestCandidate.riskScore,
       hazardsNearRoute: fastestCandidate.hazardsNearRoute,
       coordinates: fastestCandidate.coordinates,
-    });
-  } else if (evaluatedRoutes.length === 1) {
-    // If OSRM returned exactly 1 route, generate a distinct alternative detour
-    const detourCoords = generateFallbackPolyline(sLat, sLng, eLat, eLng, 0.2);
-    const detourDist = computePolylineDistanceMeters(detourCoords);
-    const detourDur = Math.round(detourDist / 1.3);
-    const { riskScore, hazardsNearRoute } = evaluateRouteRisk(
-      detourCoords,
-      activeHazards
-    );
-
-    options.push({
-      id: 'fastest',
-      label: 'Fastest Route',
-      distanceMeters: detourDist,
-      durationSeconds: detourDur,
-      riskScore,
-      hazardsNearRoute,
-      coordinates: detourCoords,
     });
   }
 

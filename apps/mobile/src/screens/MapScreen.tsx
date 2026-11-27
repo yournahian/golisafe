@@ -668,10 +668,20 @@ export default function MapScreen() {
         const perm = await Location.requestForegroundPermissionsAsync();
         if (!perm.granted || !mounted) return;
 
-        // Immediate initial real GPS fix so map centers on user's actual neighborhood (e.g. Shonir Akhra)
+        // Immediate initial real GPS fix (High accuracy) so map centers on user's actual neighborhood
         try {
+          const lastKnown = await Location.getLastKnownPositionAsync();
+          if (mounted && lastKnown?.coords) {
+            const lkCoords = {
+              latitude: lastKnown.coords.latitude,
+              longitude: lastKnown.coords.longitude,
+            };
+            setUserLocation(lkCoords);
+            setMapCenter(lkCoords);
+            setHasRealGpsFix(true);
+          }
           const initialPos = await Location.getCurrentPositionAsync({
-            accuracy: Location.Accuracy.Balanced,
+            accuracy: Location.Accuracy.High,
           });
           if (mounted && initialPos?.coords) {
             const realCoords = {
@@ -691,9 +701,9 @@ export default function MapScreen() {
 
         sub = await Location.watchPositionAsync(
           {
-            accuracy: Location.Accuracy.Balanced,
-            distanceInterval: 15,
-            timeInterval: 8000,
+            accuracy: Location.Accuracy.High,
+            distanceInterval: 10,
+            timeInterval: 6000,
           },
           (loc) => {
             if (!mounted) return;
@@ -705,7 +715,7 @@ export default function MapScreen() {
             setHasRealGpsFix(true);
             if (typeof loc.coords.accuracy === 'number') {
               setGpsAccuracyMeters(loc.coords.accuracy);
-              if (loc.coords.accuracy <= 50) {
+              if (loc.coords.accuracy <= 120) {
                 setGpsBannerDismissed(false);
               }
             }
@@ -1435,11 +1445,18 @@ export default function MapScreen() {
   };
 
   const handleLocate = async () => {
+    // Immediately center on current known GPS position so button feels instant
+    if (hasRealGpsFix) {
+      setMapCenter(userLocation);
+      webViewRef.current?.injectJavaScript(
+        `window.focusUserLocation && window.focusUserLocation(${userLocation.latitude}, ${userLocation.longitude}, 16); true;`,
+      );
+    }
     try {
       const perm = await Location.requestForegroundPermissionsAsync();
       if (perm.granted) {
         const pos = await Location.getCurrentPositionAsync({
-          accuracy: Location.Accuracy.Balanced,
+          accuracy: Location.Accuracy.High,
         });
         const realCoords = {
           latitude: pos.coords.latitude,
@@ -1448,6 +1465,9 @@ export default function MapScreen() {
         setUserLocation(realCoords);
         setMapCenter(realCoords);
         setHasRealGpsFix(true);
+        if (typeof pos.coords.accuracy === 'number') {
+          setGpsAccuracyMeters(pos.coords.accuracy);
+        }
         webViewRef.current?.injectJavaScript(
           `window.focusUserLocation && window.focusUserLocation(${realCoords.latitude}, ${realCoords.longitude}, 16); true;`,
         );
@@ -1458,7 +1478,7 @@ export default function MapScreen() {
     }
     setMapCenter(userLocation);
     webViewRef.current?.injectJavaScript(
-      `window.focusUserLocation && window.focusUserLocation(${userLocation.latitude}, ${userLocation.longitude}, 15); true;`,
+      `window.focusUserLocation && window.focusUserLocation(${userLocation.latitude}, ${userLocation.longitude}, 16); true;`,
     );
   };
 
@@ -1985,9 +2005,9 @@ export default function MapScreen() {
         </TouchableOpacity>
       ) : null}
 
-      {/* Subtle Low GPS Accuracy Banner (>50m, NFR-18) */}
+      {/* Subtle Low GPS Accuracy Banner (>120m so indoor ±65-100m doesn't spam, NFR-18) */}
       {gpsAccuracyMeters !== null &&
-        gpsAccuracyMeters > 50 &&
+        gpsAccuracyMeters > 120 &&
         !gpsBannerDismissed &&
         !proximityAlert && (
           <View

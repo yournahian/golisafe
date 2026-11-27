@@ -505,37 +505,84 @@ export async function fetchSafeRoutes(
     // Fall back to synthetic detour + direct polylines below
   }
 
-  if (candidates.length === 0) {
-    const detourCoords = buildFallbackArc(
-      startLat,
-      startLng,
-      endLat,
-      endLng,
-      0.24,
-    );
-    const directCoords = buildFallbackArc(startLat, startLng, endLat, endLng, 0);
-    const detourDist = Math.max(150, polylineDistanceMeters(detourCoords));
-    const directDist = Math.max(120, polylineDistanceMeters(directCoords));
-    const detourRisk = scorePolylineRisk(detourCoords, activeHazards);
-    const directRisk = scorePolylineRisk(directCoords, activeHazards);
+  // Also fetch real street-following side-alley bypass routes via OSRM if needed
+  const needsRealDetour =
+    candidates.length === 1 ||
+    (candidates.length > 0 && candidates.every((c) => c.riskScore > 0));
 
+  if (needsRealDetour) {
+    const midLat = (startLat + endLat) / 2;
+    const midLng = (startLng + endLng) / 2;
+    const dLat = endLat - startLat;
+    const dLng = endLng - startLng;
+    const len = Math.sqrt(dLat * dLat + dLng * dLng) || 0.002;
+    const offsetDeg = Math.min(0.0022, Math.max(0.0013, len * 0.45));
+    const perpLat = (-dLng / len) * offsetDeg;
+    const perpLng = (dLat / len) * offsetDeg;
+
+    const viaPoints: Array<[number, number]> = [
+      [Number((midLat + perpLat).toFixed(6)), Number((midLng + perpLng).toFixed(6))],
+      [Number((midLat - perpLat).toFixed(6)), Number((midLng - perpLng).toFixed(6))],
+    ];
+
+    const viaResults = await Promise.all(
+      viaPoints.map(async ([vLat, vLng]) => {
+        try {
+          const viaUrl =
+            `https://router.project-osrm.org/route/v1/foot/` +
+            `${startLng},${startLat};${vLng},${vLat};${endLng},${endLat}?overview=full&geometries=geojson`;
+          const resp = await fetch(viaUrl);
+          if (!resp.ok) return null;
+          const j = await resp.json();
+          const r = j?.routes?.[0];
+          const rawCoords: Array<[number, number]> | undefined =
+            r?.geometry?.coordinates;
+          if (!Array.isArray(rawCoords) || rawCoords.length < 2) return null;
+          const coords: Array<[number, number]> = rawCoords.map(
+            ([lng, lat]) => [lat, lng],
+          );
+          const distanceMeters =
+            typeof r.distance === 'number'
+              ? Math.round(r.distance)
+              : polylineDistanceMeters(coords);
+          const durationSeconds =
+            typeof r.duration === 'number'
+              ? Math.round(r.duration)
+              : Math.round(distanceMeters / 1.3);
+          const risk = scorePolylineRisk(coords, activeHazards);
+          return {
+            coordinates: coords,
+            distanceMeters,
+            durationSeconds,
+            riskScore: risk.riskScore,
+            hazardsNearRoute: risk.hazardsNearRoute,
+          };
+        } catch {
+          return null;
+        }
+      }),
+    );
+
+    for (const vr of viaResults) {
+      if (vr) candidates.push(vr);
+    }
+  }
+
+  if (candidates.length === 0) {
+    const directCoords: Array<[number, number]> = [
+      [startLat, startLng],
+      [endLat, endLng],
+    ];
+    const directDist = Math.max(100, polylineDistanceMeters(directCoords));
+    const directRisk = scorePolylineRisk(directCoords, activeHazards);
     return [
       {
         id: 'safest',
         label: 'Safest Route',
-        distanceMeters: detourDist,
-        durationSeconds: Math.max(120, Math.round(detourDist / 1.3)),
-        riskScore: Math.max(0, Math.min(detourRisk.riskScore, directRisk.riskScore)),
-        hazardsNearRoute: detourRisk.hazardsNearRoute,
-        coordinates: detourCoords,
-      },
-      {
-        id: 'fastest',
-        label: 'Fastest Route',
         distanceMeters: directDist,
-        durationSeconds: Math.max(90, Math.round(directDist / 1.35)),
-        riskScore: Math.max(directRisk.riskScore, detourRisk.riskScore + 15),
-        hazardsNearRoute: Math.max(1, directRisk.hazardsNearRoute),
+        durationSeconds: Math.max(60, Math.round(directDist / 1.3)),
+        riskScore: directRisk.riskScore,
+        hazardsNearRoute: directRisk.hazardsNearRoute,
         coordinates: directCoords,
       },
     ];
@@ -545,7 +592,12 @@ export async function fetchSafeRoutes(
     (a, b) => a.riskScore - b.riskScore || a.durationSeconds - b.durationSeconds,
   )[0];
 
-  const remaining = candidates.filter((c) => c !== safest);
+  const remaining = candidates.filter(
+    (c) =>
+      c !== safest &&
+      (Math.abs(c.distanceMeters - safest.distanceMeters) > 15 ||
+        c.riskScore !== safest.riskScore),
+  );
   if (remaining.length > 0) {
     const fastest = remaining.sort(
       (a, b) => a.durationSeconds - b.durationSeconds || a.riskScore - b.riskScore,
@@ -564,50 +616,11 @@ export async function fetchSafeRoutes(
     ];
   }
 
-  // Only 1 OSRM route returned: pair with curved safety detour so user can toggle
-  const altDetour = buildFallbackArc(startLat, startLng, endLat, endLng, 0.22);
-  const altDist = Math.max(
-    safest.distanceMeters + 90,
-    polylineDistanceMeters(altDetour),
-  );
-  const altRisk = scorePolylineRisk(altDetour, activeHazards);
-
-  if (altRisk.riskScore <= safest.riskScore) {
-    return [
-      {
-        id: 'safest',
-        label: 'Safest Route',
-        distanceMeters: altDist,
-        durationSeconds: Math.max(
-          safest.durationSeconds + 60,
-          Math.round(altDist / 1.3),
-        ),
-        riskScore: altRisk.riskScore,
-        hazardsNearRoute: altRisk.hazardsNearRoute,
-        coordinates: altDetour,
-      },
-      {
-        id: 'fastest',
-        label: 'Fastest Route',
-        ...safest,
-      },
-    ];
-  }
-
   return [
     {
       id: 'safest',
       label: 'Safest Route',
       ...safest,
-    },
-    {
-      id: 'fastest',
-      label: 'Fastest Route',
-      distanceMeters: Math.max(120, Math.round(safest.distanceMeters * 0.92)),
-      durationSeconds: Math.max(60, Math.round(safest.durationSeconds * 0.9)),
-      riskScore: Math.max(safest.riskScore + 15, altRisk.riskScore),
-      hazardsNearRoute: Math.max(1, altRisk.hazardsNearRoute),
-      coordinates: altDetour,
     },
   ];
 }

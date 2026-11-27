@@ -332,63 +332,66 @@ export const AlertsModal: React.FC<AlertsModalProps> = ({
           </View>
 
           {/* Category Filter Chips + Night Priority Banner (Figma Nearby Alerts) */}
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={{
-              paddingHorizontal: 16,
-              paddingTop: 10,
-              paddingBottom: 6,
-              gap: 8,
-            }}
-          >
-            {(
-              [
-                'all',
-                'extortion_spot',
-                'unlit_alley',
-                'waterlogging',
-                'pothole_manhole',
-                'unsafe_footbridge',
-              ] as const
-            ).map((cat) => {
-              const active = selectedCat === cat;
-              const label =
-                cat === 'all'
-                  ? language === 'bn'
-                    ? 'সব'
-                    : 'All'
-                  : language === 'bn'
-                    ? CATEGORY_META[cat].nameBn
-                    : CATEGORY_META[cat].name;
-              return (
-                <TouchableOpacity
-                  key={cat}
-                  onPress={() => setSelectedCat(cat)}
-                  style={{
-                    paddingHorizontal: 11,
-                    paddingVertical: 6,
-                    borderRadius: 999,
-                    borderWidth: 1,
-                    borderColor: active ? '#3B82F6' : theme.cardBorder,
-                    backgroundColor: active
-                      ? 'rgba(59, 130, 246, 0.2)'
-                      : theme.cardBg,
-                  }}
-                >
-                  <Text
+          <View style={{ height: 48, flexShrink: 0, justifyContent: 'center' }}>
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={{
+                paddingHorizontal: 16,
+                alignItems: 'center',
+                gap: 8,
+              }}
+            >
+              {(
+                [
+                  'all',
+                  'extortion_spot',
+                  'unlit_alley',
+                  'waterlogging',
+                  'pothole_manhole',
+                  'unsafe_footbridge',
+                ] as const
+              ).map((cat) => {
+                const active = selectedCat === cat;
+                const label =
+                  cat === 'all'
+                    ? language === 'bn'
+                      ? 'সব'
+                      : 'All'
+                    : language === 'bn'
+                      ? CATEGORY_META[cat].nameBn
+                      : CATEGORY_META[cat].name;
+                return (
+                  <TouchableOpacity
+                    key={cat}
+                    onPress={() => setSelectedCat(cat)}
                     style={{
-                      fontSize: 11.5,
-                      fontWeight: active ? '700' : '600',
-                      color: active ? '#93C5FD' : theme.textSecondary,
+                      height: 32,
+                      paddingHorizontal: 12,
+                      borderRadius: 999,
+                      borderWidth: 1,
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      borderColor: active ? '#3B82F6' : theme.cardBorder,
+                      backgroundColor: active
+                        ? 'rgba(59, 130, 246, 0.2)'
+                        : theme.cardBg,
                     }}
                   >
-                    {label}
-                  </Text>
-                </TouchableOpacity>
-              );
-            })}
-          </ScrollView>
+                    <Text
+                      style={{
+                        fontSize: 12,
+                        fontWeight: active ? '700' : '600',
+                        color: active ? '#93C5FD' : theme.textSecondary,
+                      }}
+                    >
+                      {label}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </ScrollView>
+          </View>
 
           {isDark && (
             <View

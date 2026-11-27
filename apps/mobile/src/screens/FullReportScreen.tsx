@@ -249,15 +249,20 @@ export default function FullReportScreen({
   const [sensorAvailable, setSensorAvailable] = useState<boolean | null>(null);
 
   const miniMapRef = useRef<WebView>(null);
+  const [miniMapReady, setMiniMapReady] = useState<boolean>(false);
+
+  const effectiveInitLat =
+    draft?.latitude ?? initialCoords?.latitude ?? userLocation.latitude;
+  const effectiveInitLng =
+    draft?.longitude ?? initialCoords?.longitude ?? userLocation.longitude;
 
   useEffect(() => {
-    if (!visible) return;
-    const initLat =
-      draft?.latitude ?? initialCoords?.latitude ?? userLocation.latitude;
-    const initLng =
-      draft?.longitude ?? initialCoords?.longitude ?? userLocation.longitude;
-    setLatitude(initLat);
-    setLongitude(initLng);
+    if (!visible) {
+      setMiniMapReady(false);
+      return;
+    }
+    setLatitude(effectiveInitLat);
+    setLongitude(effectiveInitLng);
     setCategory(draft?.category ?? 'pothole_manhole');
     setSeverity(draft?.severity ?? 'Medium');
     setImageUri(draft?.imageUri ?? null);
@@ -269,7 +274,21 @@ export default function FullReportScreen({
     setSubTag(undefined);
     setAiResult(null);
     setReportMode('manual');
-  }, [visible, draft, initialCoords, initialLabel, userLocation]);
+  }, [
+    visible,
+    draft,
+    initialCoords,
+    initialLabel,
+    effectiveInitLat,
+    effectiveInitLng,
+  ]);
+
+  useEffect(() => {
+    if (!visible || !miniMapReady || !miniMapRef.current) return;
+    miniMapRef.current.injectJavaScript(
+      `window.moveMiniPin && window.moveMiniPin(${latitude}, ${longitude}); true;`,
+    );
+  }, [visible, miniMapReady, latitude, longitude]);
 
   // 15s voice recording timer
   useEffect(() => {
@@ -329,10 +348,8 @@ export default function FullReportScreen({
   }, [userLocation, latitude, longitude]);
 
   const miniMapHtml = useMemo(
-    () => buildMiniMapHtml(latitude, longitude),
-    // Initialize once per modal open; updates use injectJavaScript
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [visible],
+    () => buildMiniMapHtml(effectiveInitLat, effectiveInitLng),
+    [visible, effectiveInitLat, effectiveInitLng],
   );
 
   const handleSelectPreset = (preset: (typeof LANDMARK_PRESETS)[number]) => {
@@ -631,6 +648,7 @@ export default function FullReportScreen({
                 source={{ html: miniMapHtml }}
                 originWhitelist={['*']}
                 javaScriptEnabled
+                onLoadEnd={() => setMiniMapReady(true)}
                 onMessage={handleMiniMapMessage}
               />
             </View>
