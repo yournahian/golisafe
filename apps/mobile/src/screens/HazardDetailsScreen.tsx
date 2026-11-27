@@ -87,7 +87,7 @@ export default function HazardDetailsScreen({
   const topInset = Platform.OS === 'android' ? 12 : 52;
 
   return (
-    <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
+    <Modal visible={visible} animationType="fade" onRequestClose={onClose}>
       <View style={[styles.screen, { backgroundColor: theme.bg }]}>
         <StatusBar
           barStyle={theme.statusBarStyle}
@@ -123,6 +123,9 @@ export default function HazardDetailsScreen({
           style={styles.scroll}
           contentContainerStyle={styles.scrollContent}
           showsVerticalScrollIndicator={false}
+          nestedScrollEnabled
+          overScrollMode="never"
+          scrollEventThrottle={16}
         >
           {/* Main Info Card */}
           <View

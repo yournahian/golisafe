@@ -494,6 +494,9 @@ export const QuickReportModal: React.FC<QuickReportModalProps> = ({
             },
           ]}
         >
+          {/* Sleek grabber handle for premium bottom HUD */}
+          <View style={styles.grabberHandle} />
+
           {/* Header: Quick Report + Near <location> + Close */}
           <View style={styles.headerRow}>
             <View style={{ flex: 1 }}>
@@ -768,13 +771,26 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   sheet: {
-    borderTopLeftRadius: 24,
-    borderTopRightRadius: 24,
-    borderTopWidth: 1,
+    borderTopLeftRadius: 26,
+    borderTopRightRadius: 26,
+    borderTopWidth: 1.2,
     paddingHorizontal: 16,
-    paddingTop: 18,
+    paddingTop: 10,
     paddingBottom: Platform.OS === 'ios' ? 28 : 18,
     gap: 12,
+    shadowColor: '#000',
+    shadowOpacity: 0.48,
+    shadowRadius: 22,
+    shadowOffset: { width: 0, height: -8 },
+    elevation: 20,
+  },
+  grabberHandle: {
+    width: 38,
+    height: 4,
+    borderRadius: 999,
+    backgroundColor: 'rgba(148, 163, 184, 0.38)',
+    alignSelf: 'center',
+    marginBottom: 4,
   },
   headerRow: {
     flexDirection: 'row',
@@ -893,13 +909,18 @@ const styles = StyleSheet.create({
     color: '#93C5FD',
   },
   recordBtn: {
-    height: 46,
-    borderRadius: 12,
+    height: 48,
+    borderRadius: 13,
     backgroundColor: '#3B82F6',
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     gap: 8,
+    shadowColor: '#3B82F6',
+    shadowOpacity: 0.35,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 6,
   },
   recordBtnText: {
     color: '#FFFFFF',

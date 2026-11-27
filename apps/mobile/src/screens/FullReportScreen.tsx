@@ -590,7 +590,7 @@ export default function FullReportScreen({
   return (
     <Modal
       visible={visible}
-      animationType="slide"
+      animationType="fade"
       onRequestClose={onClose}
     >
       <View style={[styles.screen, { backgroundColor: theme.bg }]}>
@@ -632,6 +632,10 @@ export default function FullReportScreen({
           contentContainerStyle={styles.scrollContent}
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
+          keyboardDismissMode="on-drag"
+          nestedScrollEnabled
+          overScrollMode="never"
+          scrollEventThrottle={16}
         >
           {/* Select Category — 5 Horizontal Cards matching Figma */}
           <Text style={[styles.sectionLabel, { color: theme.text }]}>
@@ -722,6 +726,8 @@ export default function FullReportScreen({
                 source={{ html: miniMapHtml }}
                 originWhitelist={['*']}
                 javaScriptEnabled
+                scrollEnabled={false}
+                nestedScrollEnabled={false}
                 onLoadEnd={() => setMiniMapReady(true)}
                 onMessage={handleMiniMapMessage}
               />

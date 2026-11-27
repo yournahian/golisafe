@@ -333,7 +333,7 @@ export const AlertsModal: React.FC<AlertsModalProps> = ({
   return (
     <Modal
       visible={visible}
-      animationType="slide"
+      animationType="fade"
       onRequestClose={onClose}
     >
       <View style={[styles.screen, { backgroundColor: theme.bg }]}>
@@ -433,6 +433,13 @@ export const AlertsModal: React.FC<AlertsModalProps> = ({
           style={styles.list}
           contentContainerStyle={styles.listContent}
           showsVerticalScrollIndicator={false}
+          nestedScrollEnabled
+          overScrollMode="never"
+          removeClippedSubviews={false}
+          initialNumToRender={10}
+          maxToRenderPerBatch={10}
+          windowSize={7}
+          scrollEventThrottle={16}
           ListEmptyComponent={
             <View style={styles.emptyWrap}>
               <AppIcon
@@ -492,7 +499,6 @@ export const AlertsModal: React.FC<AlertsModalProps> = ({
                 ]}
                 onPress={() => {
                   onSelectHazard(item);
-                  onClose();
                 }}
                 activeOpacity={0.85}
               >
@@ -569,7 +575,7 @@ export const AlertsModal: React.FC<AlertsModalProps> = ({
           }}
         />
 
-        {/* Bottom 3-Tab Navigation Bar matching Figma SS4 */}
+        {/* Bottom 3-Tab Navigation Bar — exact parity with MapScreen & FullReportScreen */}
         <View
           style={[
             styles.bottomNav,
@@ -599,6 +605,9 @@ export const AlertsModal: React.FC<AlertsModalProps> = ({
                 />
               </Svg>
             </View>
+            <Text style={[styles.navLabel, { color: theme.textSecondary }]}>
+              {bn ? 'মানচিত্র' : 'Map'}
+            </Text>
           </TouchableOpacity>
 
           <View style={styles.navItem}>
@@ -624,12 +633,19 @@ export const AlertsModal: React.FC<AlertsModalProps> = ({
                 />
               </Svg>
             </View>
+            <Text
+              style={[
+                styles.navLabel,
+                { color: theme.primary, fontWeight: '600' },
+              ]}
+            >
+              {bn ? 'সতর্কতা' : 'Alerts'}
+            </Text>
           </View>
 
           <TouchableOpacity
             style={styles.navItem}
             onPress={() => {
-              onClose();
               onOpenReport?.();
             }}
             activeOpacity={0.8}
@@ -644,6 +660,9 @@ export const AlertsModal: React.FC<AlertsModalProps> = ({
                 />
               </Svg>
             </View>
+            <Text style={[styles.navLabel, { color: theme.textSecondary }]}>
+              {bn ? 'রিপোর্ট' : 'Report'}
+            </Text>
           </TouchableOpacity>
         </View>
       </View>
@@ -798,18 +817,23 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-around',
     borderTopWidth: 1,
-    paddingVertical: 10,
-    paddingBottom: Platform.OS === 'ios' ? 24 : 12,
+    paddingTop: 8,
+    paddingBottom: Platform.OS === 'ios' ? 24 : 10,
   },
   navItem: {
     alignItems: 'center',
     justifyContent: 'center',
-    minWidth: 68,
+    gap: 3,
+    minWidth: 72,
   },
   navIconPill: {
-    paddingHorizontal: 18,
-    paddingVertical: 7,
-    borderRadius: 16,
+    paddingHorizontal: 16,
+    paddingVertical: 5,
+    borderRadius: 14,
+  },
+  navLabel: {
+    fontSize: 11,
+    fontWeight: '500',
   },
 });
 

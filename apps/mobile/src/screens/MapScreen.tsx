@@ -3235,15 +3235,16 @@ export default function MapScreen() {
         isDarkMode={isNighttime}
         language={locale}
         onSelectHazard={(hazard) => {
-          setAlertsSheetOpen(false);
           clearSafeRoute();
           setSelectedHazardId(hazard.id);
           setDetailsHazardId(hazard.id);
+          // Close AlertsModal right after HazardDetailsScreen fades in so there is zero flash/jerk
+          setTimeout(() => setAlertsSheetOpen(false), 140);
         }}
         onOpenReport={() => {
-          setAlertsSheetOpen(false);
           setFullReportDraft(null);
           setFullReportVisible(true);
+          setTimeout(() => setAlertsSheetOpen(false), 140);
         }}
       />
 
@@ -3436,9 +3437,9 @@ export default function MapScreen() {
           setReportModalVisible(false);
         }}
         onOpenFullReport={(draft) => {
-          setReportModalVisible(false);
           setFullReportDraft(draft);
           setFullReportVisible(true);
+          setTimeout(() => setReportModalVisible(false), 120);
         }}
         onSubmitHazard={handleSubmitHazard}
         isDark={isNighttime}
