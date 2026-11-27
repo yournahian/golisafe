@@ -131,7 +131,8 @@ export const QuickReportModal: React.FC<QuickReportModalProps> = ({
   const [recording, setRecording] = useState<Audio.Recording | null>(null);
   const [isRecording, setIsRecording] = useState<boolean>(false);
   const [recordDuration, setRecordDuration] = useState<number>(0);
-  const [isClassifying, setIsClassifying] = useState<boolean>(false);
+  const [classifyingSource, setClassifyingSource] = useState<'voice' | 'photo' | null>(null);
+  const isClassifying = classifyingSource !== null;
   const [aiDraft, setAiDraft] = useState<AiClassificationResult | null>(null);
   const [aiTimeoutNotice, setAiTimeoutNotice] = useState<string | null>(null);
 
@@ -247,7 +248,7 @@ export const QuickReportModal: React.FC<QuickReportModalProps> = ({
 
         // Send actual image base64 to Gemini Vision AI (never overwrite user choice on fallback)
         if (asset.base64) {
-          setIsClassifying(true);
+          setClassifyingSource('photo');
           try {
             const aiRes = await classifyWithAI({
               imageBase64: asset.base64,
@@ -260,7 +261,7 @@ export const QuickReportModal: React.FC<QuickReportModalProps> = ({
               setAiDraft(aiRes);
             }
           } finally {
-            setIsClassifying(false);
+            setClassifyingSource(null);
           }
         }
       }
@@ -298,7 +299,7 @@ export const QuickReportModal: React.FC<QuickReportModalProps> = ({
         setImageUri(asset.uri);
 
         if (asset.base64) {
-          setIsClassifying(true);
+          setClassifyingSource('photo');
           try {
             const aiRes = await classifyWithAI({
               imageBase64: asset.base64,
@@ -311,7 +312,7 @@ export const QuickReportModal: React.FC<QuickReportModalProps> = ({
               setAiDraft(aiRes);
             }
           } finally {
-            setIsClassifying(false);
+            setClassifyingSource(null);
           }
         }
       }
@@ -376,7 +377,7 @@ export const QuickReportModal: React.FC<QuickReportModalProps> = ({
       setRecording(null);
 
       if (uri) {
-        setIsClassifying(true);
+        setClassifyingSource('voice');
         const audioBase64 = await readFileAsBase64(uri);
         const classification = await classifyWithAI({
           audioBase64: audioBase64 || undefined,
@@ -384,7 +385,7 @@ export const QuickReportModal: React.FC<QuickReportModalProps> = ({
           text: landmarkContext.trim() || undefined,
           currentCategory: selectedCategory,
         });
-        setIsClassifying(false);
+        setClassifyingSource(null);
 
         if (classification && !classification.fallback) {
           setSelectedCategory(classification.category);
@@ -397,18 +398,18 @@ export const QuickReportModal: React.FC<QuickReportModalProps> = ({
           }
           setAiDraft(classification);
         } else {
-          // Backend Gemini key not configured or timed out — keep user's selected category!
           setAiTimeoutNotice(
-            language === 'bn'
-              ? 'ভয়েস রেকর্ড সংরক্ষিত হয়েছে। লাইভ AI ট্রান্সক্রিপশনের জন্য সার্ভারে GEMINI_API_KEY প্রয়োজন — আপনার নির্বাচিত ক্যাটাগরি অপরিবর্তিত রাখা হয়েছে।'
-              : 'Voice recorded. Live AI transcription requires GEMINI_API_KEY on backend — your selected category was kept.'
+            classification?.reasoning ||
+              (language === 'bn'
+                ? 'এআই সার্ভার ব্যস্ত আছে — আপনার নির্বাচিত ক্যাটাগরি অপরিবর্তিত রাখা হয়েছে।'
+                : 'AI service busy or timed out — your selected category was kept.')
           );
         }
       }
     } catch (err) {
       console.warn('[QuickReport] stopVoiceRecording error:', err);
       setIsRecording(false);
-      setIsClassifying(false);
+      setClassifyingSource(null);
       setRecording(null);
       setAiTimeoutNotice(
         language === 'bn'
@@ -643,11 +644,18 @@ export const QuickReportModal: React.FC<QuickReportModalProps> = ({
                 disabled={isClassifying}
                 activeOpacity={0.8}
               >
-                {isClassifying ? (
+                {classifyingSource === 'voice' ? (
                   <View style={styles.voiceBtnContent}>
                     <ActivityIndicator size="small" color="#93C5FD" />
                     <Text style={styles.voiceRecordBtnText}>
-                      {language === 'bn' ? 'এআই বিশ্লেষণ চলছে…' : 'AI Analyzing Voice (5s)…'}
+                      {language === 'bn' ? 'এআই ভয়েস বিশ্লেষণ চলছে…' : 'AI Analyzing Voice…'}
+                    </Text>
+                  </View>
+                ) : classifyingSource === 'photo' ? (
+                  <View style={styles.voiceBtnContent}>
+                    <ActivityIndicator size="small" color="#93C5FD" />
+                    <Text style={styles.voiceRecordBtnText}>
+                      {language === 'bn' ? 'এআই ছবি বিশ্লেষণ চলছে…' : 'AI Analyzing Photo…'}
                     </Text>
                   </View>
                 ) : isRecording ? (

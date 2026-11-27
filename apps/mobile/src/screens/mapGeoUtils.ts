@@ -69,10 +69,67 @@ export function resolveDhakaTappedLocation(
   return {
     latitude,
     longitude,
-    label: minDistance <= 2500 ? nearest.label : 'Selected Pin Location',
+    label: minDistance <= 600 ? nearest.label : 'Locating street…',
     distanceText,
     coordLabel: `${latitude.toFixed(4)}°N, ${longitude.toFixed(4)}°E`,
   };
+}
+
+/**
+ * Fetches the exact real street / goli / neighborhood name from OpenStreetMap Nominatim
+ * so tapped pins show the true road name (e.g., Zia Sarani Road / local goli) instead of
+ * a distant static landmark.
+ */
+export async function reverseGeocodeOsm(
+  latitude: number,
+  longitude: number,
+): Promise<string | null> {
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 3500);
+    const url =
+      `https://nominatim.openstreetmap.org/reverse?format=jsonv2` +
+      `&lat=${encodeURIComponent(String(latitude))}` +
+      `&lon=${encodeURIComponent(String(longitude))}` +
+      `&zoom=18&addressdetails=1`;
+    const res = await fetch(url, {
+      headers: {
+        'User-Agent': 'GoliSafe/1.0 (civic-safety-app)',
+        'Accept-Language': 'en',
+      },
+      signal: controller.signal,
+    });
+    clearTimeout(timer);
+    if (!res.ok) return null;
+    const data = await res.json();
+    const addr = data?.address || {};
+    const road =
+      addr.road ||
+      addr.pedestrian ||
+      addr.footway ||
+      addr.residential ||
+      addr.path ||
+      data?.name ||
+      addr.quarter ||
+      '';
+    const area =
+      addr.neighbourhood ||
+      addr.suburb ||
+      addr.city_district ||
+      addr.town ||
+      '';
+    if (road && area && road.toLowerCase() !== area.toLowerCase()) {
+      return `${road}, ${area}`;
+    }
+    if (road) return road;
+    if (area) return area;
+    if (typeof data?.display_name === 'string' && data.display_name.trim()) {
+      return data.display_name.split(',').slice(0, 2).join(',').trim();
+    }
+    return null;
+  } catch {
+    return null;
+  }
 }
 
 export function findNearbyCorridorHazards(

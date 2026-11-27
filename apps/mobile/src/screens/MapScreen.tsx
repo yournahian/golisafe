@@ -58,6 +58,7 @@ import {
   computeDistanceMeters,
   findNearbyCorridorHazards,
   resolveDhakaTappedLocation,
+  reverseGeocodeOsm,
   type TappedLocationState,
 } from './mapGeoUtils';
 import { styles } from './MapScreen.styles';
@@ -1489,13 +1490,22 @@ export default function MapScreen() {
           webViewRef.current?.injectJavaScript(
             'window.clearSafeRoute && window.clearSafeRoute(); true;',
           );
-          setTappedLocation(
-            resolveDhakaTappedLocation(
-              msg.latitude,
-              msg.longitude,
-              userLocation,
-            ),
+          const initialTapped = resolveDhakaTappedLocation(
+            msg.latitude,
+            msg.longitude,
+            userLocation,
           );
+          setTappedLocation(initialTapped);
+          reverseGeocodeOsm(msg.latitude, msg.longitude).then((realName) => {
+            if (!realName) return;
+            setTappedLocation((prev) =>
+              prev &&
+              prev.latitude === msg.latitude &&
+              prev.longitude === msg.longitude
+                ? { ...prev, label: realName }
+                : prev,
+            );
+          });
         }
       } catch {
         // Ignore malformed messages

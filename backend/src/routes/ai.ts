@@ -241,7 +241,7 @@ router.post('/classify', async (req: Request, res: Response) => {
       text: `${systemPrompt}\nUser Context: "${combinedText || 'Analyze the provided audio/image accurately'}"`,
     });
 
-    let response: globalThis.Response | null = null;
+    let response: any = null;
     let usedModel = candidateModels[0];
 
     for (const model of candidateModels) {
@@ -331,6 +331,9 @@ router.post('/classify', async (req: Request, res: Response) => {
     clearTimeout(timeoutId);
     // Graceful fallback on timeout or API error
     const fallbackResult = heuristicClassify(combinedText, currentCategory);
+    if (!combinedText) {
+      fallbackResult.reasoning = `Gemini request failed (${error?.name === 'AbortError' ? 'timeout' : error?.message || 'error'}) — preserved selected category`;
+    }
     return res.status(200).json(fallbackResult);
   }
 });
