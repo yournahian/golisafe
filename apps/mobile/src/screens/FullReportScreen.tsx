@@ -2,11 +2,10 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  BackHandler,
   Image,
-  Modal,
   Platform,
   ScrollView,
-  StatusBar,
   StyleSheet,
   Text,
   TextInput,
@@ -588,20 +587,19 @@ export default function FullReportScreen({
 
   const topInset = Platform.OS === 'android' ? 12 : 52;
 
-  // Unmount modal body when hidden so Android ScrollView always measures fresh contentSize on open
+  useEffect(() => {
+    if (!visible) return;
+    const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+      onClose();
+      return true;
+    });
+    return () => sub.remove();
+  }, [visible, onClose]);
+
   if (!visible) return null;
 
   return (
-    <Modal
-      visible={visible}
-      animationType="fade"
-      onRequestClose={onClose}
-    >
-      <View style={[styles.screen, { backgroundColor: theme.bg }]}>
-        <StatusBar
-          barStyle={theme.statusBarStyle}
-          backgroundColor={theme.bg}
-        />
+    <View style={[styles.screen, { backgroundColor: theme.bg }]}>
 
         {/* Top Bar: Back Button + "Report a hazard" */}
         <View style={[styles.topBar, { paddingTop: topInset }]}>
@@ -1432,27 +1430,19 @@ export default function FullReportScreen({
             )}
           </TouchableOpacity>
         </ScrollView>
-
-        {/* Universal Bottom Navigation Bar */}
-        <BottomNavBar
-          activeTab="report"
-          isDark={isDark}
-          language={language}
-          onPressMap={onClose}
-          onPressAlerts={() => {
-            onOpenAlerts();
-            setTimeout(() => onClose(), 120);
-          }}
-          onPressReport={() => {}}
-        />
-      </View>
-    </Modal>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
   screen: {
-    flex: 1,
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 72,
+    zIndex: 45,
+    elevation: 14,
   },
   topBar: {
     flexDirection: 'row',

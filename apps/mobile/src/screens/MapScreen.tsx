@@ -3285,7 +3285,7 @@ export default function MapScreen() {
         }}
       />
 
-      {/* Universal Bottom 3-Tab Navigation Bar (Map, Alerts, + Report) */}
+      {/* Universal Bottom 3-Tab Navigation Bar — ALWAYS pinned above Map, Alerts & Report */}
       <BottomNavBar
         activeTab={activeTab}
         isDark={isNighttime}
@@ -3293,9 +3293,11 @@ export default function MapScreen() {
         positionAbsolute
         onPressMap={() => {
           setAlertsSheetOpen(false);
+          setFullReportVisible(false);
           setReportModalVisible(false);
         }}
         onPressAlerts={() => {
+          setFullReportVisible(false);
           setReportModalVisible(false);
           setAlertsSheetOpen(true);
           loadHazards();

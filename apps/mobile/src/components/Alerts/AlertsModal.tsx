@@ -1,10 +1,9 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
+  BackHandler,
   FlatList,
-  Modal,
   Platform,
   ScrollView,
-  StatusBar,
   StyleSheet,
   Text,
   TouchableOpacity,
@@ -12,7 +11,6 @@ import {
 } from 'react-native';
 import Svg, { Circle, Ellipse, Path } from 'react-native-svg';
 import AppIcon from '../AppIcon';
-import BottomNavBar from '../BottomNavBar';
 import type {
   HazardCategory,
   HazardRecord,
@@ -331,19 +329,19 @@ export const AlertsModal: React.FC<AlertsModalProps> = ({
 
   const topInset = Platform.OS === 'android' ? 14 : 52;
 
+  useEffect(() => {
+    if (!visible) return;
+    const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+      onClose();
+      return true;
+    });
+    return () => sub.remove();
+  }, [visible, onClose]);
+
   if (!visible) return null;
 
   return (
-    <Modal
-      visible={visible}
-      animationType="fade"
-      onRequestClose={onClose}
-    >
-      <View style={[styles.screen, { backgroundColor: theme.bg }]}>
-        <StatusBar
-          barStyle={isDark ? 'light-content' : 'dark-content'}
-          backgroundColor={theme.bg}
-        />
+    <View style={[styles.screen, { backgroundColor: theme.bg }]}>
 
         {/* Top Bar: ← Nearby Alerts */}
         <View style={[styles.topBar, { paddingTop: topInset }]}>
@@ -577,24 +575,19 @@ export const AlertsModal: React.FC<AlertsModalProps> = ({
             );
           }}
         />
-
-        {/* Universal Bottom Navigation Bar */}
-        <BottomNavBar
-          activeTab="alerts"
-          isDark={isDark}
-          language={language}
-          onPressMap={onClose}
-          onPressAlerts={() => {}}
-          onPressReport={() => onOpenReport?.()}
-        />
-      </View>
-    </Modal>
+    </View>
   );
 };
 
 const styles = StyleSheet.create({
   screen: {
-    flex: 1,
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 72,
+    zIndex: 40,
+    elevation: 12,
   },
   topBar: {
     flexDirection: 'row',

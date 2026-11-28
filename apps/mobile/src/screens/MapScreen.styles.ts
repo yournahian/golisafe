@@ -358,13 +358,14 @@ export const styles = StyleSheet.create({
     height: 40,
     borderRadius: 11,
     borderWidth: 1,
+    paddingHorizontal: 10,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 6,
+    gap: 5,
   },
   tappedRouteBtnText: {
-    fontSize: 13,
+    fontSize: 11.5,
     fontWeight: '600',
   },
   tappedReportBtn: {
@@ -372,12 +373,13 @@ export const styles = StyleSheet.create({
     height: 40,
     borderRadius: 11,
     borderWidth: 1,
+    paddingHorizontal: 10,
     alignItems: 'center',
     justifyContent: 'center',
   },
   tappedReportBtnText: {
     color: '#FFFFFF',
-    fontSize: 13,
+    fontSize: 11.5,
     fontWeight: '700',
   },
   safeRouteBar: {
@@ -428,15 +430,15 @@ export const styles = StyleSheet.create({
   },
   confirmCardBtn: {
     flex: 1,
-    height: 40,
+    height: 38,
     borderRadius: 10,
     borderWidth: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    paddingHorizontal: 8,
+    paddingHorizontal: 6,
   },
   confirmCardBtnText: {
-    fontSize: 12.5,
+    fontSize: 11,
     fontWeight: '700',
   },
   bottomNav: {
