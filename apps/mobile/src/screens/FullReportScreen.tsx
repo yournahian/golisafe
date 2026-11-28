@@ -23,6 +23,7 @@ import type {
   HazardSeverity,
 } from '../../../../packages/shared/api-contract';
 import type { QuickReportHazardPayload } from '../components/Report/QuickReportModal';
+import BottomNavBar from '../components/BottomNavBar';
 import { TRANSLATIONS, type Language } from '../i18n/translations';
 import {
   classifyWithAI,
@@ -586,6 +587,9 @@ export default function FullReportScreen({
   };
 
   const topInset = Platform.OS === 'android' ? 12 : 52;
+
+  // Unmount modal body when hidden so Android ScrollView always measures fresh contentSize on open
+  if (!visible) return null;
 
   return (
     <Modal
@@ -1429,98 +1433,18 @@ export default function FullReportScreen({
           </TouchableOpacity>
         </ScrollView>
 
-        {/* Bottom 3-Tab Navigation Bar with "+ Report" Active */}
-        <View
-          style={[
-            styles.bottomNav,
-            {
-              backgroundColor: theme.bottomNavBg,
-              borderTopColor: theme.border,
-            },
-          ]}
-        >
-          <TouchableOpacity
-            style={styles.navItem}
-            onPress={onClose}
-            activeOpacity={0.8}
-          >
-            <View style={styles.navIconPill}>
-              <Svg width={20} height={20} viewBox="0 0 24 24" fill="none">
-                <Path
-                  d="M9 4 3 6.8v13.2L9 17.2l6 2.8 6-2.8V4l-6 2.8L9 4Z"
-                  stroke={theme.navInactive}
-                  strokeWidth={1.8}
-                  strokeLinejoin="round"
-                />
-                <Path
-                  d="M9 4v13.2M15 6.8V20"
-                  stroke={theme.navInactive}
-                  strokeWidth={1.8}
-                  strokeLinecap="round"
-                />
-              </Svg>
-            </View>
-            <Text style={[styles.navLabel, { color: theme.navInactive }]}>
-              {t.tabs.map}
-            </Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={styles.navItem}
-            onPress={() => {
-              onClose();
-              onOpenAlerts();
-            }}
-            activeOpacity={0.8}
-          >
-            <View style={styles.navIconPill}>
-              <Svg width={20} height={20} viewBox="0 0 24 24" fill="none">
-                <Path
-                  d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"
-                  stroke={theme.navInactive}
-                  strokeWidth={1.8}
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                />
-                <Path
-                  d="M13.7 21a2 2 0 0 1-3.4 0"
-                  stroke={theme.navInactive}
-                  strokeWidth={1.8}
-                  strokeLinecap="round"
-                />
-              </Svg>
-            </View>
-            <Text style={[styles.navLabel, { color: theme.navInactive }]}>
-              {t.tabs.alerts}
-            </Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity style={styles.navItem} activeOpacity={0.8}>
-            <View
-              style={[
-                styles.navIconPill,
-                { backgroundColor: theme.primarySurface },
-              ]}
-            >
-              <Svg width={22} height={22} viewBox="0 0 24 24" fill="none">
-                <Path
-                  d="M12 5v14M5 12h14"
-                  stroke={theme.primary}
-                  strokeWidth={2.4}
-                  strokeLinecap="round"
-                />
-              </Svg>
-            </View>
-            <Text
-              style={[
-                styles.navLabel,
-                { color: theme.primary, fontWeight: '600' },
-              ]}
-            >
-              {t.tabs.report}
-            </Text>
-          </TouchableOpacity>
-        </View>
+        {/* Universal Bottom Navigation Bar */}
+        <BottomNavBar
+          activeTab="report"
+          isDark={isDark}
+          language={language}
+          onPressMap={onClose}
+          onPressAlerts={() => {
+            onOpenAlerts();
+            setTimeout(() => onClose(), 120);
+          }}
+          onPressReport={() => {}}
+        />
       </View>
     </Modal>
   );
@@ -1553,8 +1477,9 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   scrollContent: {
+    flexGrow: 1,
     paddingHorizontal: 16,
-    paddingBottom: 96,
+    paddingBottom: 32,
     gap: 14,
   },
   sectionLabel: {

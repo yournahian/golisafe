@@ -64,6 +64,7 @@ import {
 import { styles } from './MapScreen.styles';
 import FullReportScreen, { type FullReportDraft } from './FullReportScreen';
 import HazardDetailsScreen from './HazardDetailsScreen';
+import BottomNavBar from '../components/BottomNavBar';
 import { LEAFLET_HTML } from './mapTemplate';
 
 try {
@@ -3284,125 +3285,28 @@ export default function MapScreen() {
         }}
       />
 
-      {/* Bottom 3-Tab Navigation Bar (Map, Alerts, + Report) */}
-      <View
-        style={[
-          styles.bottomNav,
-          {
-            backgroundColor: theme.bottomNavBg,
-            borderTopColor: theme.border,
-          },
-        ]}
-      >
-        <TouchableOpacity
-          style={styles.navItem}
-          onPress={() => {
-            setAlertsSheetOpen(false);
-            setReportModalVisible(false);
-          }}
-          activeOpacity={0.8}
-        >
-          <View
-            style={[
-              styles.navIconPill,
-              activeTab === 'map' && { backgroundColor: theme.primarySurface },
-            ]}
-          >
-            <MapUiIcon
-              name="map"
-              size={20}
-              color={activeTab === 'map' ? theme.primary : theme.navInactive}
-            />
-          </View>
-          <Text
-            style={[
-              styles.navLabel,
-              { color: theme.navInactive },
-              activeTab === 'map' && {
-                color: theme.primary,
-                fontWeight: '600',
-              },
-            ]}
-          >
-            {t.tabs.map}
-          </Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={styles.navItem}
-          onPress={() => {
-            setReportModalVisible(false);
-            setAlertsSheetOpen(true);
-            loadHazards();
-          }}
-          activeOpacity={0.8}
-        >
-          <View
-            style={[
-              styles.navIconPill,
-              activeTab === 'alerts' && {
-                backgroundColor: theme.primarySurface,
-              },
-            ]}
-          >
-            <MapUiIcon
-              name="notifications"
-              size={20}
-              color={activeTab === 'alerts' ? theme.primary : theme.navInactive}
-            />
-          </View>
-          <Text
-            style={[
-              styles.navLabel,
-              { color: theme.navInactive },
-              activeTab === 'alerts' && {
-                color: theme.primary,
-                fontWeight: '600',
-              },
-            ]}
-          >
-            {t.tabs.alerts}
-          </Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={styles.navItem}
-          onPress={() => {
-            setAlertsSheetOpen(false);
-            setReportModalVisible(false);
-            setFullReportDraft(null);
-            setFullReportVisible(true);
-          }}
-          activeOpacity={0.8}
-        >
-          <View
-            style={[
-              styles.navIconPill,
-              activeTab === 'report' && {
-                backgroundColor: theme.primarySurface,
-              },
-            ]}
-          >
-            <MapUiIcon
-              name="add"
-              size={22}
-              color={activeTab === 'report' ? theme.primary : theme.navInactive}
-            />
-          </View>
-          <Text
-            style={[
-              styles.navLabel,
-              { color: theme.navInactive },
-              activeTab === 'report' && {
-                color: theme.primary,
-                fontWeight: '600',
-              },
-            ]}
-          >
-            {t.tabs.report}
-          </Text>
-        </TouchableOpacity>
-      </View>
+      {/* Universal Bottom 3-Tab Navigation Bar (Map, Alerts, + Report) */}
+      <BottomNavBar
+        activeTab={activeTab}
+        isDark={isNighttime}
+        language={locale}
+        positionAbsolute
+        onPressMap={() => {
+          setAlertsSheetOpen(false);
+          setReportModalVisible(false);
+        }}
+        onPressAlerts={() => {
+          setReportModalVisible(false);
+          setAlertsSheetOpen(true);
+          loadHazards();
+        }}
+        onPressReport={() => {
+          setAlertsSheetOpen(false);
+          setReportModalVisible(false);
+          setFullReportDraft(null);
+          setFullReportVisible(true);
+        }}
+      />
 
       <FilterModal
         visible={filterModalOpen}

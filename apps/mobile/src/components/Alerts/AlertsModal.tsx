@@ -12,6 +12,7 @@ import {
 } from 'react-native';
 import Svg, { Circle, Ellipse, Path } from 'react-native-svg';
 import AppIcon from '../AppIcon';
+import BottomNavBar from '../BottomNavBar';
 import type {
   HazardCategory,
   HazardRecord,
@@ -330,6 +331,8 @@ export const AlertsModal: React.FC<AlertsModalProps> = ({
 
   const topInset = Platform.OS === 'android' ? 14 : 52;
 
+  if (!visible) return null;
+
   return (
     <Modal
       visible={visible}
@@ -575,96 +578,15 @@ export const AlertsModal: React.FC<AlertsModalProps> = ({
           }}
         />
 
-        {/* Bottom 3-Tab Navigation Bar — exact parity with MapScreen & FullReportScreen */}
-        <View
-          style={[
-            styles.bottomNav,
-            {
-              backgroundColor: theme.navBg,
-              borderTopColor: theme.border,
-            },
-          ]}
-        >
-          <TouchableOpacity
-            style={styles.navItem}
-            onPress={onClose}
-            activeOpacity={0.8}
-          >
-            <View style={styles.navIconPill}>
-              <Svg width={20} height={20} viewBox="0 0 24 24" fill="none">
-                <Path
-                  d="M9 4 3 6.8v13.2L9 17.2l6 2.8 6-2.8V4l-6 2.8L9 4Z"
-                  stroke={theme.textSecondary}
-                  strokeWidth={1.8}
-                  strokeLinejoin="round"
-                />
-                <Path
-                  d="M9 4v13.2M15 6.8V20"
-                  stroke={theme.textSecondary}
-                  strokeWidth={1.8}
-                />
-              </Svg>
-            </View>
-            <Text style={[styles.navLabel, { color: theme.textSecondary }]}>
-              {bn ? 'মানচিত্র' : 'Map'}
-            </Text>
-          </TouchableOpacity>
-
-          <View style={styles.navItem}>
-            <View
-              style={[
-                styles.navIconPill,
-                { backgroundColor: theme.primarySurface },
-              ]}
-            >
-              <Svg width={20} height={20} viewBox="0 0 24 24" fill="none">
-                <Path
-                  d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"
-                  stroke={theme.primary}
-                  strokeWidth={1.8}
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                />
-                <Path
-                  d="M13.7 21a2 2 0 0 1-3.4 0"
-                  stroke={theme.primary}
-                  strokeWidth={1.8}
-                  strokeLinecap="round"
-                />
-              </Svg>
-            </View>
-            <Text
-              style={[
-                styles.navLabel,
-                { color: theme.primary, fontWeight: '600' },
-              ]}
-            >
-              {bn ? 'সতর্কতা' : 'Alerts'}
-            </Text>
-          </View>
-
-          <TouchableOpacity
-            style={styles.navItem}
-            onPress={() => {
-              onOpenReport?.();
-            }}
-            activeOpacity={0.8}
-          >
-            <View style={styles.navIconPill}>
-              <Svg width={22} height={22} viewBox="0 0 24 24" fill="none">
-                <Path
-                  d="M12 5v14M5 12h14"
-                  stroke={theme.textSecondary}
-                  strokeWidth={2}
-                  strokeLinecap="round"
-                />
-              </Svg>
-            </View>
-            <Text style={[styles.navLabel, { color: theme.textSecondary }]}>
-              {bn ? 'রিপোর্ট' : 'Report'}
-            </Text>
-          </TouchableOpacity>
-        </View>
+        {/* Universal Bottom Navigation Bar */}
+        <BottomNavBar
+          activeTab="alerts"
+          isDark={isDark}
+          language={language}
+          onPressMap={onClose}
+          onPressAlerts={() => {}}
+          onPressReport={() => onOpenReport?.()}
+        />
       </View>
     </Modal>
   );
